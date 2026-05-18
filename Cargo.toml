@@ -24,3 +24,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "2"
+
+# lbug (Kuzu graph DB) produces a static library that exceeds the 4 GB PE32
+# limit on Windows when compiled in debug mode (LNK1248).
+[profile.dev.package.lbug]
+opt-level = 2
