@@ -12,10 +12,9 @@
 ///   lsp-to-scip --server "dart pub global run dart_language_server" --lang dart
 ///
 /// Supported extension mappings are derived from --lang.
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use anyhow::{bail, Context, Result};
@@ -117,7 +116,7 @@ fn main() -> Result<()> {
         let rel_str = rel.to_string_lossy().to_string();
         let uri = path_to_uri(f);
         let content = std::fs::read_to_string(f).unwrap_or_default();
-        let line_count = content.lines().count() as u32;
+        let _line_count = content.lines().count() as u32;
 
         if cli.verbose {
             eprintln!("[lsp-to-scip] processing {}", rel_str);
@@ -222,8 +221,8 @@ impl LspConnection {
             if line.is_empty() {
                 break;
             }
-            if line.starts_with("Content-Length:") {
-                let val = line["Content-Length:".len()..].trim();
+            if let Some(stripped) = line.strip_prefix("Content-Length:") {
+                let val = stripped.trim();
                 content_length = Some(val.parse()?);
             }
         }
@@ -264,7 +263,7 @@ impl LspConnection {
         self.send(&msg)
     }
 
-    fn initialize(&mut self, root_uri: &str, lang: &str) -> Result<serde_json::Value> {
+    fn initialize(&mut self, root_uri: &str, _lang: &str) -> Result<serde_json::Value> {
         let resp = self.request("initialize", serde_json::json!({
             "processId": std::process::id(),
             "rootUri": root_uri,
@@ -309,7 +308,7 @@ impl LspConnection {
         // Handle both SymbolInformation[] and DocumentSymbol[]
         let syms: Vec<LspSymbol> = if let Some(arr) = result.as_array() {
             arr.iter()
-                .filter_map(|v| parse_symbol(v))
+                .filter_map(parse_symbol)
                 .collect()
         } else {
             vec![]
@@ -417,7 +416,7 @@ fn lang_extensions(lang: &str) -> Vec<&'static str> {
     }
 }
 
-fn symbol_string(file: &str, name: &str, kind: &str) -> String {
+fn symbol_string(file: &str, name: &str, _kind: &str) -> String {
     // SCIP symbol format: "<scheme> <manager> <package> <version> <descriptors>"
     // Use a local scheme for LSP-derived symbols
     format!("lsp . . . {}#{}", file.replace('/', "."), name)
