@@ -1574,6 +1574,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "infigraph-confluence"
+version = "0.15.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "infigraph-docs",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "infigraph-core"
 version = "0.15.0"
 dependencies = [

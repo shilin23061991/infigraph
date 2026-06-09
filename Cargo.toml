@@ -3,6 +3,7 @@ members = [
     "crates/infigraph-core",
     "crates/infigraph-languages",
     "crates/infigraph-docs",
+    "crates/infigraph-confluence",
 
     "crates/infigraph-grammar-plugin",
     "crates/infigraph-cli",
