@@ -1,4 +1,5 @@
 mod analysis;
+pub mod bench;
 pub mod bridges;
 pub mod check;
 pub mod cluster;

@@ -458,6 +458,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Capture quality baseline or compare against stored baseline
+    #[command(alias = "bq")]
+    BenchQuality {
+        /// Save current metrics as the new baseline
+        #[arg(long)]
+        save: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -647,6 +655,47 @@ fn main() -> Result<()> {
         Commands::BridgesPromote => cmd_bridges_promote(&root),
         Commands::DetectPatterns { pattern, json } => {
             cmd_detect_patterns(&root, pattern.as_deref(), json)
+        }
+        Commands::BenchQuality { save } => {
+            let registry = bundled_registry()?;
+            let mut prism = infigraph_core::Infigraph::open(&root, registry)?;
+            prism.init()?;
+            let store = prism
+                .store()
+                .context("graph not initialized -- run 'infigraph index' first")?;
+
+            let current = infigraph_core::bench::QualityMetrics::capture(&root, store)?;
+
+            if save {
+                infigraph_core::bench::save_baseline(&root, &current)?;
+                println!("Baseline saved to .infigraph/quality_baseline.json");
+                println!("{}", current.format());
+            } else {
+                match infigraph_core::bench::load_baseline(&root) {
+                    Some(baseline) => {
+                        let results =
+                            infigraph_core::bench::compare(&baseline.metrics, &current);
+                        print!(
+                            "{}",
+                            infigraph_core::bench::format_comparison(&results)
+                        );
+                        let regressions =
+                            results.iter().filter(|r| r.regression).count();
+                        if regressions > 0 {
+                            println!("\n  {} regression(s) detected!", regressions);
+                            std::process::exit(1);
+                        } else {
+                            println!("\n  No regressions detected.");
+                        }
+                    }
+                    None => {
+                        println!("No baseline found. Run with --save to create one:");
+                        println!("  infigraph bench-quality --save");
+                        println!("{}", current.format());
+                    }
+                }
+            }
+            Ok(())
         }
     }
 }

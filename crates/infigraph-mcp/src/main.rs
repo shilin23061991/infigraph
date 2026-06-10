@@ -783,8 +783,8 @@ fn build_tools_list() -> Vec<Value> {
     vec![
         tool_def("index_project", "REQUIRED FIRST STEP: Parse all source files and build the code knowledge graph. Must run before any other infigraph tool. Auto-indexes 60+ languages.",
             p(true,false,false,json!({})), &["path"]),
-        tool_def("search", "PRIMARY: Unified code search — finds symbols by name, meaning, or text pattern in one call. Runs keyword-hybrid (BM25+vector) AND semantic-hybrid AND regex grep together, merges and deduplicates results. Auto-escalates limits when results are weak. Use this INSTEAD OF grep/ripgrep/find and INSTEAD OF search_symbols/semantic_search/search_code for all code search.",
-            p(true,false,false,json!({"query":{"type":"string","description":"Search query (symbol name, natural language, or text pattern)"},"limit":{"type":"integer","default":20},"kind":{"type":"string","description":"Optional: filter by symbol kind (Function, Method, Class, etc.)"},"file_pattern":{"type":"string","description":"Optional: glob to restrict text search (e.g. '*.py')"}})), &["path","query"]),
+        tool_def("search", "PRIMARY: Unified search — finds symbols by name, meaning, or text pattern in one call. Runs keyword-hybrid (BM25+vector) AND semantic-hybrid AND regex grep together, merges and deduplicates results. Auto-escalates internally when results are weak — no need to retry with different tools. Use this INSTEAD OF grep/ripgrep/find for ALL search. Set scope='docs' for document-only search.",
+            p(true,false,false,json!({"query":{"type":"string","description":"Search query (symbol name, natural language, or text pattern)"},"limit":{"type":"integer","default":20},"kind":{"type":"string","description":"Optional: filter by symbol kind (Function, Method, Class, etc.)"},"file_pattern":{"type":"string","description":"Optional: glob to restrict text search (e.g. '*.py')"},"scope":{"type":"string","enum":["code","docs","all"],"default":"all","description":"Search scope: code (symbols only), docs (documents only), all (both)"},"regex":{"type":"boolean","default":false,"description":"If true, treat query as a raw regex pattern for grep (not escaped)"}})), &["path","query"]),
         tool_def("search_symbols", "Advanced: Find symbols by name with keyword-weighted hybrid search (alpha=0.3). Prefer the unified `search` tool for most use cases.",
             p(true,false,false,json!({"query":{"type":"string","description":"Search query"},"limit":{"type":"integer","default":10}})), &["path","query"]),
         tool_def("query_graph", "Advanced: Execute Cypher query against code knowledge graph. Use for complex cross-cutting queries not covered by other tools. Full Cypher support.",
@@ -1169,6 +1169,15 @@ fn find_containing_symbol<'a>(
 }
 
 fn tool_search(args: &Value) -> Result<String> {
+    let scope = args
+        .get("scope")
+        .and_then(|s| s.as_str())
+        .unwrap_or("all");
+
+    if scope == "docs" {
+        return tool_search_docs(args);
+    }
+
     let prism = open_prism(args)?;
     let query = args
         .get("query")
@@ -1181,6 +1190,10 @@ fn tool_search(args: &Value) -> Result<String> {
         .map(str::to_lowercase);
     let file_pattern = args.get("file_pattern").and_then(|f| f.as_str());
     let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
+    let use_regex = args
+        .get("regex")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -1281,16 +1294,23 @@ fn tool_search(args: &Value) -> Result<String> {
     let root = PathBuf::from(path)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(path));
-    let grep_pattern = query
-        .chars()
-        .flat_map(|c| {
-            if r"\.+*?()|[]{}^$-".contains(c) {
-                vec!['\\', c]
-            } else {
-                vec![c]
-            }
-        })
-        .collect::<String>();
+    let grep_pattern = if use_regex {
+        args.get("pattern")
+            .and_then(|p| p.as_str())
+            .unwrap_or(query)
+            .to_string()
+    } else {
+        query
+            .chars()
+            .flat_map(|c| {
+                if r"\.+*?()|[]{}^$-".contains(c) {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
+            .collect::<String>()
+    };
     let grep_results =
         infigraph_core::search::grep_search(&root, &grep_pattern, file_pattern, limit)
             .unwrap_or_default();
@@ -1430,6 +1450,40 @@ fn tool_search(args: &Value) -> Result<String> {
                 gm.line_number,
                 gm.line_text.trim()
             ));
+        }
+    }
+
+    // scope="all": append document results
+    if scope == "all" {
+        if let Ok(doc_idx) = open_doc_index(args) {
+            if let Some(doc_store) = doc_idx.store() {
+                let doc_limit = (limit / 2).max(5);
+                if let Ok(doc_results) =
+                    infigraph_docs::search::hybrid_doc_search(
+                        query,
+                        doc_store,
+                        &root,
+                        doc_limit,
+                        0.5,
+                    )
+                {
+                    if !doc_results.is_empty() {
+                        out.push_str("\n---\nDocument matches:\n");
+                        for dr in &doc_results {
+                            let heading = dr.heading.as_deref().unwrap_or("");
+                            out.push_str(&format!(
+                                "  [{}] {} (score: {:.2})\n",
+                                dr.doc_file, heading, dr.score
+                            ));
+                            let snippet: String =
+                                dr.text.chars().take(200).collect();
+                            if !snippet.is_empty() {
+                                out.push_str(&format!("    {}\n", snippet));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

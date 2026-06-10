@@ -1,5 +1,5 @@
 use anyhow::Result;
-use infigraph_core::lang::{LanguagePack, LanguageRegistry};
+use infigraph_core::lang::{CustomEdgeDef, LanguagePack, LanguageRegistry};
 
 const PYTHON_ENTITIES: &str = include_str!("../languages/python/entities.scm");
 const PYTHON_RELATIONS: &str = include_str!("../languages/python/relations.scm");
@@ -426,12 +426,16 @@ pub fn bundled_registry() -> Result<LanguageRegistry> {
 
 fn python_pack() -> Result<LanguagePack> {
     let grammar = tree_sitter_python::LANGUAGE.into();
-    LanguagePack::new(
+    LanguagePack::new_with_custom_edges(
         "python",
         vec![".py"],
         grammar,
         PYTHON_ENTITIES,
         PYTHON_RELATIONS,
+        vec![CustomEdgeDef {
+            name: "DECORATED_BY".to_string(),
+            capture: "decorates".to_string(),
+        }],
     )
 }
 
@@ -464,7 +468,17 @@ fn javascript_pack() -> Result<LanguagePack> {
 
 fn go_pack() -> Result<LanguagePack> {
     let grammar = tree_sitter_go::LANGUAGE.into();
-    LanguagePack::new("go", vec![".go"], grammar, GO_ENTITIES, GO_RELATIONS)
+    LanguagePack::new_with_custom_edges(
+        "go",
+        vec![".go"],
+        grammar,
+        GO_ENTITIES,
+        GO_RELATIONS,
+        vec![CustomEdgeDef {
+            name: "SPAWNS".to_string(),
+            capture: "goroutine".to_string(),
+        }],
+    )
 }
 
 fn java_pack() -> Result<LanguagePack> {
