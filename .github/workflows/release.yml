@@ -46,6 +46,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p infigraph-cli -p infigraph-mcp

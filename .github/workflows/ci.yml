@@ -26,15 +26,16 @@ jobs:
     strategy:
       matrix:
         # os: [ubuntu-latest, macos-latest, windows-latest]
+        # windows: esaxx-rs /MT vs lbug /MD CRT mismatch (LNK2038) — patched, re-enable when verified
         os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      # - name: Install cmake
-      #   if: runner.os == 'Linux'
-      #   run: sudo apt-get update && sudo apt-get install -y cmake
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.os }}
       - run: cargo clippy --all-targets -- -D warnings
 
   test:
@@ -47,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # - name: Install cmake
-      #   if: runner.os == 'Linux'
-      #   run: sudo apt-get update && sudo apt-get install -y cmake
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.os }}
       - run: cargo test --all
