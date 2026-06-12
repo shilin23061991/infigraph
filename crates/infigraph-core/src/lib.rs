@@ -129,6 +129,10 @@ impl Infigraph {
                         .collect();
                     let files_in = file_list.join(", ");
                     let _ = conn.query(&format!(
+                        "MATCH (f:File)-[:DEFINES]->(s:Symbol)-[:HAS_STATEMENT]->(st:Statement) WHERE f.id IN [{}] DETACH DELETE st",
+                        files_in
+                    ));
+                    let _ = conn.query(&format!(
                         "MATCH (s:Symbol) WHERE s.file IN [{}] DETACH DELETE s",
                         files_in
                     ));
@@ -154,6 +158,10 @@ impl Infigraph {
                     .map(|e| format!("'{}'", escape_str(&e.file)))
                     .collect();
                 let files_in = file_list.join(", ");
+                let _ = conn.query(&format!(
+                    "MATCH (f:File)-[:DEFINES]->(s:Symbol)-[:HAS_STATEMENT]->(st:Statement) WHERE f.id IN [{}] DETACH DELETE st",
+                    files_in
+                ));
                 let _ = conn.query(&format!(
                     "MATCH (s:Symbol) WHERE s.file IN [{}] DETACH DELETE s",
                     files_in
@@ -306,6 +314,9 @@ impl Infigraph {
                 .map(|e| format!("'{}'", escape_str(&e.file)))
                 .collect();
             let files_in = file_list.join(", ");
+            let _ = conn.query(&format!(
+                "MATCH (f:File)-[:DEFINES]->(s:Symbol)-[:HAS_STATEMENT]->(st:Statement) WHERE f.id IN [{files_in}] DETACH DELETE st"
+            ));
             let _ = conn.query(&format!(
                 "MATCH (s:Symbol) WHERE s.file IN [{files_in}] DETACH DELETE s"
             ));

@@ -209,6 +209,7 @@ pub(crate) fn tool_get_graph_schema(args: &Value) -> Result<String> {
         "  CONTAINS  ({} edges)  Module -> Symbol, Symbol -> Symbol\n",
         stats.contains
     ));
+    out.push_str("  HAS_STATEMENT         Symbol -> Statement\n");
 
     // Show symbol kinds present in the graph
     out.push_str("\n=== Symbol Kinds ===\n");
@@ -660,6 +661,93 @@ pub(crate) fn tool_list_files(args: &Value) -> Result<String> {
     files.dedup();
 
     Ok(files.join("\n"))
+}
+
+pub(crate) fn tool_generate_test_context(args: &Value) -> Result<String> {
+    let prism = open_prism(args)?;
+    let store = prism.store().context("not initialized")?;
+    let conn = store.connection()?;
+    let gq = infigraph_core::graph::GraphQuery::new(&conn);
+
+    let file_filter = args.get("file").and_then(|v| v.as_str());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+    let ctx = gq.generate_test_context(file_filter, limit)?;
+
+    let mut out = format!("## Test Generation Context\n\nFramework: {}\n", ctx.framework);
+
+    if let Some(ref ex) = ctx.example_test {
+        out.push_str(&format!("\n### Example Test (style reference)\n"));
+        out.push_str(&format!("  {} — {}:{}-{}\n", ex.name, ex.file, ex.start_line, ex.end_line));
+        let file_path = prism.root().join(&ex.file);
+        if let Ok(source) = std::fs::read_to_string(&file_path) {
+            let lines: Vec<&str> = source.lines().collect();
+            let start = (ex.start_line as usize).saturating_sub(1);
+            let end = (ex.end_line as usize).min(lines.len());
+            if start < end {
+                out.push_str("```\n");
+                for (i, line) in lines[start..end].iter().enumerate() {
+                    out.push_str(&format!("{:4}  {}\n", start + i + 1, line));
+                }
+                out.push_str("```\n");
+            }
+        }
+    }
+
+    out.push_str(&format!("\n### Targets ({} uncovered symbols, priority-ranked)\n\n", ctx.targets.len()));
+
+    for (i, t) in ctx.targets.iter().enumerate() {
+        out.push_str(&format!(
+            "{}. **{}** [{}] — {}:{}-{} (priority: {})\n",
+            i + 1, t.name, t.kind, t.file, t.start_line, t.end_line, t.priority_score
+        ));
+        if !t.visibility.is_empty() {
+            out.push_str(&format!("   visibility: {}\n", t.visibility));
+        }
+        if !t.parameters.is_empty() {
+            out.push_str(&format!("   params: {}\n", t.parameters));
+        }
+        if !t.return_type.is_empty() {
+            out.push_str(&format!("   returns: {}\n", t.return_type));
+        }
+        if t.complexity > 1 {
+            out.push_str(&format!("   complexity: {}\n", t.complexity));
+        }
+        if !t.callers.is_empty() {
+            out.push_str(&format!("   callers: {}\n", t.callers.join(", ")));
+        }
+        if !t.callees.is_empty() {
+            out.push_str(&format!("   callees: {}\n", t.callees.join(", ")));
+        }
+        if !t.branches.is_empty() {
+            out.push_str(&format!("   branches ({}):\n", t.branches.len()));
+            for b in &t.branches {
+                let indent = "   ".repeat(b.depth as usize + 2);
+                if b.condition.is_empty() {
+                    out.push_str(&format!("{}L{}: {}\n", indent, b.line, b.kind));
+                } else {
+                    out.push_str(&format!("{}L{}: {} ({})\n", indent, b.line, b.kind, b.condition));
+                }
+            }
+        }
+
+        let file_path = prism.root().join(&t.file);
+        if let Ok(source) = std::fs::read_to_string(&file_path) {
+            let lines: Vec<&str> = source.lines().collect();
+            let start = (t.start_line as usize).saturating_sub(1);
+            let end = (t.end_line as usize).min(lines.len());
+            if start < end {
+                out.push_str("   ```\n");
+                for (i, line) in lines[start..end].iter().enumerate() {
+                    out.push_str(&format!("   {:4}  {}\n", start + i + 1, line));
+                }
+                out.push_str("   ```\n");
+            }
+        }
+        out.push('\n');
+    }
+
+    Ok(out)
 }
 
 pub(crate) fn tool_generate_sequence_diagram(args: &Value) -> Result<String> {

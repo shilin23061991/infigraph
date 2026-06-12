@@ -210,6 +210,29 @@ impl GraphStore {
             ));
         }
 
+        // Insert Statement nodes + HAS_STATEMENT edges
+        if !extraction.statements.is_empty() {
+            let stmt_rows: Vec<String> = extraction.statements.iter().map(|s| {
+                format!(
+                    "{{id: '{}', kind: '{}', condition: '{}', start_line: {}, end_line: {}, depth: {}, parent_symbol: '{}'}}",
+                    escape(&s.id), s.kind.as_str(), escape(&s.condition),
+                    s.start_line, s.end_line, s.depth, escape(&s.parent_symbol),
+                )
+            }).collect();
+            let _ = conn.query(&format!(
+                "UNWIND [{}] AS s CREATE (:Statement {{id: s.id, kind: s.kind, condition: s.condition, start_line: s.start_line, end_line: s.end_line, depth: s.depth, parent_symbol: s.parent_symbol}})",
+                stmt_rows.join(", ")
+            ));
+
+            let edge_rows: Vec<String> = extraction.statements.iter().map(|s| {
+                format!("{{a: '{}', b: '{}'}}", escape(&s.parent_symbol), escape(&s.id))
+            }).collect();
+            let _ = conn.query(&format!(
+                "UNWIND [{}] AS p MATCH (a:Symbol), (b:Statement) WHERE a.id = p.a AND b.id = p.b CREATE (a)-[:HAS_STATEMENT]->(b)",
+                edge_rows.join(", ")
+            ));
+        }
+
         Ok(())
     }
 

@@ -185,6 +185,56 @@ pub struct Bridge {
     pub detail: String,
 }
 
+/// The kind of control-flow statement extracted from a function body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StatementKind {
+    If,
+    ElseIf,
+    Else,
+    For,
+    While,
+    DoWhile,
+    Loop,
+    Match,
+    Case,
+    Try,
+    Catch,
+    Ternary,
+    Guard,
+}
+
+impl StatementKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::If => "If",
+            Self::ElseIf => "ElseIf",
+            Self::Else => "Else",
+            Self::For => "For",
+            Self::While => "While",
+            Self::DoWhile => "DoWhile",
+            Self::Loop => "Loop",
+            Self::Match => "Match",
+            Self::Case => "Case",
+            Self::Try => "Try",
+            Self::Catch => "Catch",
+            Self::Ternary => "Ternary",
+            Self::Guard => "Guard",
+        }
+    }
+}
+
+/// A control-flow statement inside a function/method body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Statement {
+    pub id: String,
+    pub kind: StatementKind,
+    pub condition: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub depth: u32,
+    pub parent_symbol: String,
+}
+
 /// Result of extracting a single file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileExtraction {
@@ -193,4 +243,5 @@ pub struct FileExtraction {
     pub content_hash: String,
     pub symbols: Vec<Symbol>,
     pub relations: Vec<Relation>,
+    pub statements: Vec<Statement>,
 }

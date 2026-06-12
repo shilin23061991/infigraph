@@ -241,6 +241,15 @@ impl GraphStore {
         let mut custom_pairs: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
 
+        let mut stmt_ids: Vec<String> = Vec::new();
+        let mut stmt_kinds: Vec<String> = Vec::new();
+        let mut stmt_conditions: Vec<String> = Vec::new();
+        let mut stmt_slines: Vec<i64> = Vec::new();
+        let mut stmt_elines: Vec<i64> = Vec::new();
+        let mut stmt_depths: Vec<i64> = Vec::new();
+        let mut stmt_parents_sym = Vec::new();
+        let mut has_stmt_pairs: Vec<(String, String)> = Vec::new();
+
         for e in extractions {
             let mod_name = e.file.rsplit_once('/').map(|(_, f)| f).unwrap_or(&e.file);
             mod_ids.push(e.file.clone());
@@ -338,6 +347,19 @@ impl GraphStore {
                     }
                 }
             }
+
+            for stmt in &e.statements {
+                stmt_ids.push(stmt.id.clone());
+                stmt_kinds.push(stmt.kind.as_str().to_string());
+                stmt_conditions.push(stmt.condition.clone());
+                stmt_slines.push(stmt.start_line as i64);
+                stmt_elines.push(stmt.end_line as i64);
+                stmt_depths.push(stmt.depth as i64);
+                stmt_parents_sym.push(stmt.parent_symbol.clone());
+                if known_ids.contains(&stmt.parent_symbol) {
+                    has_stmt_pairs.push((stmt.parent_symbol.clone(), stmt.id.clone()));
+                }
+            }
         }
 
         // Write node parquet files
@@ -428,6 +450,22 @@ impl GraphStore {
             fwd_slash_path(&sym_pq)
         )).map_err(|e| anyhow::anyhow!("COPY Symbol failed: {e}"))?;
 
+        let stmt_pq = tmp.join("infigraph_index_statements.parquet");
+        if !stmt_ids.is_empty() {
+            parquet_loader::write_node_parquet(&stmt_pq, &[
+                ("id", DataType::Utf8), ("kind", DataType::Utf8), ("condition", DataType::Utf8),
+                ("start_line", DataType::Int64), ("end_line", DataType::Int64),
+                ("depth", DataType::Int64), ("parent_symbol", DataType::Utf8),
+            ], vec![
+                Arc::new(StringArray::from(stmt_ids)), Arc::new(StringArray::from(stmt_kinds)),
+                Arc::new(StringArray::from(stmt_conditions)),
+                Arc::new(Int64Array::from(stmt_slines)), Arc::new(Int64Array::from(stmt_elines)),
+                Arc::new(Int64Array::from(stmt_depths)), Arc::new(StringArray::from(stmt_parents_sym)),
+            ])?;
+            conn.query(&format!("COPY Statement FROM '{}'", fwd_slash_path(&stmt_pq)))
+                .map_err(|e| anyhow::anyhow!("COPY Statement failed: {e}"))?;
+        }
+
         // Edge tables -- write parquet and COPY FROM with in-memory UNWIND fallback
         #[allow(clippy::type_complexity)]
         let edge_tables: Vec<(&str, &[(String, String)], &str, &str)> = vec![
@@ -439,6 +477,7 @@ impl GraphStore {
             ("IMPORTS", &imp_pairs, "Module", "Module"),
             ("READS", &reads_pairs, "Symbol", "Symbol"),
             ("WRITES", &writes_pairs, "Symbol", "Symbol"),
+            ("HAS_STATEMENT", &has_stmt_pairs, "Symbol", "Statement"),
         ];
 
         for (table, pairs, src_label, dst_label) in &edge_tables {
@@ -492,6 +531,7 @@ impl GraphStore {
         let _ = std::fs::remove_file(&mod_pq);
         let _ = std::fs::remove_file(&file_pq);
         let _ = std::fs::remove_file(&sym_pq);
+        let _ = std::fs::remove_file(&stmt_pq);
 
         Ok(())
     }

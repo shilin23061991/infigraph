@@ -45,6 +45,10 @@ impl GraphStore {
     pub fn remove_file(&self, file: &str) -> Result<()> {
         let conn = self.connection()?;
         let _ = conn.query(&format!(
+            "MATCH (f:File)-[:DEFINES]->(s:Symbol)-[:HAS_STATEMENT]->(st:Statement) WHERE f.id = '{}' DETACH DELETE st",
+            escape(file)
+        ));
+        let _ = conn.query(&format!(
             "MATCH (s:Symbol) WHERE s.file = '{}' DETACH DELETE s",
             escape(file)
         ));

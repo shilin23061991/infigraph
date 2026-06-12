@@ -1,6 +1,8 @@
 pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE Symbol ADD parameters STRING DEFAULT ''",
     "ALTER TABLE Symbol ADD return_type STRING DEFAULT ''",
+    "CREATE NODE TABLE IF NOT EXISTS Statement(id STRING, kind STRING, condition STRING, start_line INT32, end_line INT32, depth INT32, parent_symbol STRING, PRIMARY KEY(id))",
+    "CREATE REL TABLE IF NOT EXISTS HAS_STATEMENT(FROM Symbol TO Statement)",
 ];
 
 /// Kuzu schema DDL for the infigraph graph.
@@ -61,6 +63,16 @@ pub const CREATE_SCHEMA: &[&str] = &[
         is_dev BOOLEAN,
         PRIMARY KEY(id)
     )",
+    "CREATE NODE TABLE IF NOT EXISTS Statement(
+        id STRING,
+        kind STRING,
+        condition STRING,
+        start_line INT32,
+        end_line INT32,
+        depth INT32,
+        parent_symbol STRING,
+        PRIMARY KEY(id)
+    )",
     // Relationship tables
     "CREATE REL TABLE IF NOT EXISTS CALLS(FROM Symbol TO Symbol)",
     "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM Module TO Dependency, is_dev BOOLEAN)",
@@ -77,6 +89,7 @@ pub const CREATE_SCHEMA: &[&str] = &[
     "CREATE REL TABLE IF NOT EXISTS CONTAINS_FOLDER(FROM Folder TO Folder)",
     "CREATE REL TABLE IF NOT EXISTS DEFINES(FROM File TO Symbol)",
     "CREATE REL TABLE IF NOT EXISTS CALLS_SERVICE(FROM Symbol TO Symbol, method STRING, path STRING, target_service STRING)",
+    "CREATE REL TABLE IF NOT EXISTS HAS_STATEMENT(FROM Symbol TO Statement)",
 ];
 
 use kuzu::Connection;

@@ -6,12 +6,13 @@ pub use relations::{extract_relations, extract_relations_with_custom_edges};
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
+use crate::analysis::extract_statements;
 use crate::lang::{LanguagePack, ParserBackend};
-use crate::model::{FileExtraction, Relation, RelationKind, Span, SymbolKind};
+use crate::model::{FileExtraction, Relation, RelationKind, Span, Statement, SymbolKind};
 
 /// Parse a source file and extract all symbols and relationships.
 pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<FileExtraction> {
-    let (symbols, mut relations) = match &pack.backend {
+    let (symbols, mut relations, statements) = match &pack.backend {
         ParserBackend::TreeSitter {
             grammar,
             entity_query,
@@ -38,9 +39,13 @@ pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<Fi
                     &pack.custom_edges,
                 )
             };
-            (symbols, relations)
+            let stmts = extract_statements_for_symbols(root, source, &symbols);
+            (symbols, relations, stmts)
         }
-        ParserBackend::Custom(extractor) => extractor.extract(path, source, &pack.name)?,
+        ParserBackend::Custom(extractor) => {
+            let (s, r) = extractor.extract(path, source, &pack.name)?;
+            (s, r, Vec::new())
+        }
     };
 
     // Generate CALLS edges from Route symbols to their handler functions
@@ -58,7 +63,51 @@ pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<Fi
         content_hash,
         symbols,
         relations,
+        statements,
     })
+}
+
+fn extract_statements_for_symbols(
+    root: tree_sitter::Node<'_>,
+    source: &[u8],
+    symbols: &[crate::model::Symbol],
+) -> Vec<Statement> {
+    let fn_symbols: Vec<(&str, u32, u32)> = symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Function | SymbolKind::Method | SymbolKind::Test))
+        .map(|s| (s.id.as_str(), s.span.start_line, s.span.end_line))
+        .collect();
+
+    if fn_symbols.is_empty() {
+        return Vec::new();
+    }
+
+    let mut all_stmts = Vec::new();
+    collect_fn_nodes(root, source, &fn_symbols, &mut all_stmts);
+    let mut seen = std::collections::HashSet::new();
+    all_stmts.retain(|s| seen.insert(s.id.clone()));
+    all_stmts
+}
+
+fn collect_fn_nodes<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &'a [u8],
+    fn_symbols: &[(&str, u32, u32)],
+    stmts: &mut Vec<Statement>,
+) {
+    let start = node.start_position().row as u32 + 1;
+    let end = node.end_position().row as u32 + 1;
+
+    if let Some((sym_id, _, _)) = fn_symbols.iter().find(|(_, sl, el)| start == *sl && end == *el) {
+        let mut extracted = extract_statements(node, source, sym_id, "");
+        stmts.append(&mut extracted);
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i as u32) {
+            collect_fn_nodes(child, source, fn_symbols, stmts);
+        }
+    }
 }
 
 /// Create CALLS relations from Route symbols to handler functions in the same file.

@@ -101,24 +101,32 @@ fn extract_text(bytes: &[u8]) -> Result<(String, Option<String>, Option<usize>)>
 }
 
 fn extract_pdf(path: &Path, bytes: &[u8]) -> Result<(String, Option<String>, Option<usize>)> {
-    let page_count = count_pdf_pages(bytes);
-    let text = pdf_extract::extract_text_from_mem(bytes)
-        .with_context(|| format!("PDF text extraction failed: {}", path.display()))?;
-    let title = text
-        .lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .filter(|t| !t.is_empty());
-    Ok((text, title, page_count))
-}
-
-fn count_pdf_pages(bytes: &[u8]) -> Option<usize> {
-    let needle = b"/Type /Page";
-    let count = bytes.windows(needle.len()).filter(|w| *w == needle).count();
-    if count > 0 {
-        Some(count)
-    } else {
-        None
+    match pdf_oxide::PdfDocument::from_bytes(bytes.to_vec()) {
+        Ok(doc) => {
+            let page_count = doc.page_count().unwrap_or(0);
+            let mut pages_text = Vec::new();
+            for i in 0..page_count {
+                match doc.extract_text(i) {
+                    Ok(text) => pages_text.push(text),
+                    Err(e) => {
+                        eprintln!("warning: PDF page {} extraction failed in {}: {e}", i + 1, path.display());
+                    }
+                }
+            }
+            let text = pages_text.join("\n");
+            let title = text.lines().next().map(|l| l.trim().to_string()).filter(|t| !t.is_empty());
+            let count = if page_count > 0 { Some(page_count) } else { None };
+            Ok((text, title, count))
+        }
+        Err(_) => {
+            let text = String::from_utf8_lossy(bytes);
+            if text.is_ascii() && text.len() > 10 {
+                let title = text.lines().next().map(|l| l.trim().to_string()).filter(|t| !t.is_empty());
+                Ok((text.into_owned(), title, None))
+            } else {
+                anyhow::bail!("PDF extraction failed: {}", path.display())
+            }
+        }
     }
 }
 
