@@ -1,51 +1,8 @@
 ---
 layout: default
-title: Infigraph — AST-powered Local-first Code Intelligence
+title: Home
+nav_order: 1
 ---
-
-<style>
-  .hero-section {
-    text-align: center;
-    margin-bottom: 3rem;
-    padding: 2rem 0;
-  }
-  .hero-image {
-    max-width: 100%;
-    height: auto;
-    margin: 2rem 0;
-  }
-  .cta-button {
-    display: inline-block;
-    background-color: #0693e3;
-    color: white;
-    padding: 12px 30px;
-    margin: 1rem 0.5rem;
-    border-radius: 5px;
-    text-decoration: none;
-    font-weight: bold;
-    transition: background-color 0.3s;
-  }
-  .cta-button:hover {
-    background-color: #005a87;
-    text-decoration: none;
-    color: white;
-  }
-  .highlights-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    margin: 2rem 0;
-  }
-  .highlight-item h3 {
-    margin-top: 0;
-    color: #0693e3;
-  }
-  @media (max-width: 600px) {
-    .highlights-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>
 
 # Infigraph
 
@@ -112,50 +69,37 @@ Then ask your AI agent:
 "Find authentication logic in this codebase"
 ```
 
-<a href="/infigraph/getting-started" class="cta-button">→ Get Started (2 minutes)</a>
+[Get Started →]({% link getting-started.md %}){: .btn .btn-primary }
 
 ---
 
 ## Key Capabilities
 
-<div class="highlights-grid">
-  <div class="highlight-item">
-    <h3>🌐 62 Languages</h3>
-    <p>Tree-sitter + ANTLR grammar plugins. Zero config.</p>
-  </div>
-  <div class="highlight-item">
-    <h3>🔍 Hybrid Search</h3>
-    <p>BM25 + Model2Vec. Find "auth logic" even if function isn't named auth.</p>
-  </div>
-  <div class="highlight-item">
-    <h3>🛢️ Graph Database</h3>
-    <p>Full Cypher queries. WITH, OPTIONAL MATCH, variable-length paths.</p>
-  </div>
-  <div class="highlight-item">
-    <h3>⚡ Call Resolution</h3>
-    <p>Import-aware cross-file linking. Knows what actually calls what.</p>
-  </div>
-  <div class="highlight-item">
-    <h3>🚀 69 MCP Tools</h3>
-    <p>Claude Code, Cursor, VS Code, Copilot, Windsurf. All supported.</p>
-  </div>
-  <div class="highlight-item">
-    <h3>🔒 Offline First</h3>
-    <p>Everything runs locally. No APIs. No network. No cloud.</p>
-  </div>
-</div>
+**🌐 62 Languages**  
+Tree-sitter + ANTLR grammar plugins. Zero config.
+
+**🔍 Hybrid Search**  
+BM25 + Model2Vec. Find "auth logic" even if function isn't named auth.
+
+**🛢️ Graph Database**  
+Full Cypher queries. WITH, OPTIONAL MATCH, variable-length paths.
+
+**⚡ Call Resolution**  
+Import-aware cross-file linking. Knows what actually calls what.
+
+**🚀 69 MCP Tools**  
+Claude Code, Cursor, VS Code, Copilot, Windsurf. All supported.
+
+**🔒 Offline First**  
+Everything runs locally. No APIs. No network. No cloud.
 
 ---
 
-## Learn More
+## Next Steps
 
-<a href="/infigraph/getting-started" class="cta-button">Getting Started Guide</a>
-<a href="/infigraph/architecture" class="cta-button">Architecture & Design</a>
-<a href="/infigraph/contributing" class="cta-button">Contributing</a>
-
----
-
-**[View on GitHub](https://github.com/intuit/infigraph)** • **[License: Apache 2.0](https://github.com/intuit/infigraph/blob/main/LICENSE)**
+[Getting Started Guide →]({% link getting-started.md %}){: .btn .btn-primary }
+[Architecture & Design →]({% link architecture.md %}){: .btn }
+[Contributing →]({% link contributing.md %}){: .btn }
 
 ## Quick Start
 
