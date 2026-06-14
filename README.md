@@ -74,7 +74,9 @@ Examples:
 
 ## Table of Contents
 
-- [Why Infigraph](#why-infigraph-what-makes-it-unique) — What's unique in the market
+- [The Problem](#the-problem) — What Infigraph solves
+- [Why Infigraph](#why-infigraph-what-makes-it-unique) — Unique market position
+- [The Solution](#the-solution) — How it works
 - [Key Highlights](#key-highlights) — Core capabilities at a glance
 - [Quick Start](#quick-start) — Install and run in 2 minutes
 - [How It Works](#how-it-works) — Integration with AI coding agents
@@ -82,7 +84,7 @@ Examples:
 - [Installation](#installation) — Setup for all platforms
 - [Usage Examples](#usage-examples) — CLI commands, Web UI, tasks
 - [Features & Architecture](#features--architecture) — Full capabilities list
-- [Supported Languages](#supported-languages-62) — All 62 languages
+- [Supported Languages (62)](#supported-languages-62) — All 62 languages
 - [Contributing](#contributing) — Build from source, add languages, contribute
 - [License](#license)
 
