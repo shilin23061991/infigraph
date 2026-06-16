@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 use infigraph_core::Infigraph;
 use infigraph_languages::bundled_registry;
 
-use super::session::{session_date_id, session_epoch};
+pub use super::session::{session_date_id, session_epoch};
 
-pub(crate) fn open_prism(args: &Value) -> Result<Infigraph> {
+pub fn open_prism(args: &Value) -> Result<Infigraph> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -19,7 +19,7 @@ pub(crate) fn open_prism(args: &Value) -> Result<Infigraph> {
     Ok(prism)
 }
 
-pub(crate) fn find_infigraph_cli() -> Option<std::path::PathBuf> {
+pub fn find_infigraph_cli() -> Option<std::path::PathBuf> {
     // Check same directory as this binary first
     if let Ok(exe) = std::env::current_exe() {
         let sibling = exe.parent()?.join("infigraph");
@@ -42,7 +42,7 @@ pub(crate) fn find_infigraph_cli() -> Option<std::path::PathBuf> {
     None
 }
 
-pub(crate) fn find_containing_symbol<'a>(
+pub fn find_containing_symbol<'a>(
     intervals: &'a [(&str, usize, usize, &str)],
     file: &str,
     line: usize,
@@ -56,7 +56,7 @@ pub(crate) fn find_containing_symbol<'a>(
     })
 }
 
-pub(crate) fn save_analysis(path: &str, tool_name: &str, content: &str) -> Result<String> {
+pub fn save_analysis(path: &str, tool_name: &str, content: &str) -> Result<String> {
     let root = PathBuf::from(path);
     let dir = root.join(".infigraph").join("sessions").join("analysis");
     std::fs::create_dir_all(&dir)?;
@@ -77,7 +77,7 @@ pub(crate) fn save_analysis(path: &str, tool_name: &str, content: &str) -> Resul
     ))
 }
 
-pub(crate) fn log_activity(tool_name: &str, args: &Value) {
+pub fn log_activity(tool_name: &str, args: &Value) {
     if matches!(
         tool_name,
         "get_latest_session"
@@ -124,14 +124,14 @@ pub(crate) fn log_activity(tool_name: &str, args: &Value) {
     }
 }
 
-pub(crate) fn glob_matches(glob: &str, path: &str) -> bool {
+pub fn glob_matches(glob: &str, path: &str) -> bool {
     // Simple glob: * matches any sequence, ? matches one char
     let gi = glob.chars().peekable();
     let pi = path.chars().peekable();
     glob_match_inner(&gi.collect::<Vec<_>>(), &pi.collect::<Vec<_>>())
 }
 
-fn glob_match_inner(glob: &[char], path: &[char]) -> bool {
+pub fn glob_match_inner(glob: &[char], path: &[char]) -> bool {
     match (glob.first(), path.first()) {
         (None, None) => true,
         (Some('*'), _) => {

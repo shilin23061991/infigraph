@@ -87,11 +87,13 @@ impl Registry {
             .map(|p| p.name.clone())
             .collect();
 
+        let abs_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
         self.repos.insert(
             name.to_string(),
             RepoEntry {
                 name: name.to_string(),
-                path: path.to_path_buf(),
+                path: abs_path,
                 languages: langs,
                 symbol_count: stats.symbols,
                 module_count: stats.modules,

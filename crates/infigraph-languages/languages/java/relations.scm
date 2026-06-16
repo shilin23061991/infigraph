@@ -1,7 +1,13 @@
 ; Java relationship extraction queries
 
-; Method invocations
+; Method invocations on objects: obj.method()
 (method_invocation
+  object: (_) @call.receiver
+  name: (identifier) @call.func) @call.site
+
+; Unqualified method invocations: method()
+(method_invocation
+  !object
   name: (identifier) @call.func) @call.site
 
 ; Object creation: new Foo()

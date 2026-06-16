@@ -100,6 +100,12 @@ impl GraphStore {
     }
 
     /// Get total counts for stats.
+    pub fn derive_tested_by_edges(&self) -> Result<usize> {
+        let conn = self.connection()?;
+        let q = super::queries::GraphQuery::new(&conn);
+        q.derive_tested_by_edges()
+    }
+
     pub fn stats(&self) -> Result<GraphStats> {
         let conn = self.connection()?;
 

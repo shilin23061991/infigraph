@@ -267,4 +267,12 @@ mod tests {
         let unique: std::collections::HashSet<&str> = ids.iter().cloned().collect();
         assert_eq!(ids.len(), unique.len(), "IDs not unique: {:?}", ids);
     }
+
+    #[test]
+    fn test_python_guard_early_return() {
+        let source = "def process(x):\n    if x is None:\n        return\n    do_work(x)\n    do_more(x)\n    return x\n";
+        let stmts = parse_python(source);
+        let kinds: Vec<&str> = stmts.iter().map(|s| s.kind.as_str()).collect();
+        assert!(kinds.contains(&"If"), "expected If, got {:?}", kinds);
+    }
 }

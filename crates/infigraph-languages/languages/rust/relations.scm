@@ -7,6 +7,7 @@
 ; Method calls: obj.method()
 (call_expression
   function: (field_expression
+    value: (_) @call.receiver
     field: (field_identifier) @call.func)) @call.site
 
 ; Use declarations (imports)

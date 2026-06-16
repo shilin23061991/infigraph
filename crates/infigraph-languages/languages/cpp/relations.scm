@@ -7,6 +7,7 @@
 ; Method calls: obj.method() or obj->method()
 (call_expression
   function: (field_expression
+    argument: (_) @call.receiver
     field: (field_identifier) @call.func)) @call.site
 
 ; Qualified calls: ns::func()

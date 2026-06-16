@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::super::helpers::open_prism;
 
-pub(crate) fn tool_export_graph(args: &Value) -> Result<String> {
+pub fn tool_export_graph(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let format = args
         .get("format")
@@ -28,7 +28,7 @@ pub(crate) fn tool_export_graph(args: &Value) -> Result<String> {
     String::from_utf8(buf).context("export produced invalid UTF-8")
 }
 
-pub(crate) fn tool_visualize(args: &Value) -> Result<String> {
+pub fn tool_visualize(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -39,7 +39,7 @@ pub(crate) fn tool_visualize(args: &Value) -> Result<String> {
     Ok(format!("Graph visualization written to: {}", path))
 }
 
-pub(crate) fn tool_visualize_symbol(args: &Value) -> Result<String> {
+pub fn tool_visualize_symbol(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")

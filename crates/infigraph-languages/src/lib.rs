@@ -1753,4 +1753,127 @@ LEFT JOIN risk_rules b ON a.id = b.assessment_id;";
             panic!("Complex nested/DML failures:\n{}", failures.join("\n"));
         }
     }
+
+    #[test]
+    fn test_pascal_relations() {
+        let pack = pascal_pack().expect("Pascal pack should load");
+        let src = br#"unit Test;
+interface
+uses SysUtils, Classes;
+type
+  TMyClass = class(TObject)
+    procedure DoStuff;
+  end;
+implementation
+procedure TMyClass.DoStuff;
+begin
+  WriteLn('hello');
+  SomeObj.Method(42);
+  inherited Create;
+end;
+end."#;
+
+        let extraction = infigraph_core::extract::extract_file(
+            "test.pas",
+            &src[..],
+            &pack,
+        ).expect("extract_file should succeed for Pascal");
+
+        let calls: Vec<_> = extraction.relations.iter()
+            .filter(|r| r.kind == infigraph_core::model::RelationKind::Calls)
+            .collect();
+
+        let imports: Vec<_> = extraction.relations.iter()
+            .filter(|r| r.kind == infigraph_core::model::RelationKind::Imports)
+            .collect();
+
+        let inherits: Vec<_> = extraction.relations.iter()
+            .filter(|r| r.kind == infigraph_core::model::RelationKind::Inherits)
+            .collect();
+
+        assert!(!calls.is_empty(), "Expected CALLS relations from Pascal code");
+        assert!(!imports.is_empty(), "Expected IMPORTS relations from Pascal code");
+        assert!(!inherits.is_empty(), "Expected INHERITS relations from Pascal code");
+    }
+
+    #[test]
+    fn test_csharp_inheritance() {
+        let pack = csharp_pack().expect("C# pack should load");
+        let src = br#"using System;
+using System.Collections.Generic;
+
+namespace Intuit.Applications.PTG.DatabaseService
+{
+    public class SqliteDataLayer : IDataLayer
+    {
+        public void AddNewClient(string name) { }
+        public void DeleteClient(int id) { }
+    }
+}
+"#;
+        let extraction = infigraph_core::extract::extract_file("test.cs", &src[..], &pack)
+            .expect("extract_file should succeed for C#");
+
+        let inherits: Vec<_> = extraction.relations.iter()
+            .filter(|r| r.kind == infigraph_core::model::RelationKind::Inherits)
+            .collect();
+        assert!(!inherits.is_empty(), "Expected INHERITS relations from C# class : interface");
+    }
+
+    #[test]
+    fn test_rust_test_extraction() {
+        let pack = rust_pack().unwrap();
+        let src = br#"
+#[test]
+fn test_add() {
+    assert_eq!(1 + 1, 2);
+}
+
+pub fn public_fn() -> i32 {
+    42
+}
+
+fn private_fn() {}
+
+pub(crate) fn crate_fn() {}
+"#;
+        let extraction = infigraph_core::extract::extract_file("lib.rs", src, &pack).unwrap();
+        let syms = &extraction.symbols;
+
+        let test_add = syms.iter().find(|s| s.name == "test_add");
+        assert!(test_add.is_some(), "test_add should be extracted");
+        assert_eq!(test_add.unwrap().kind, infigraph_core::model::SymbolKind::Test,
+            "test_add should have Test kind, got {:?}", test_add.unwrap().kind);
+
+        let public_fn = syms.iter().find(|s| s.name == "public_fn");
+        assert!(public_fn.is_some(), "public_fn should be extracted");
+        assert_eq!(public_fn.unwrap().visibility.as_deref(), Some("pub"),
+            "public_fn should have pub visibility, got {:?}", public_fn.unwrap().visibility);
+
+        let private_fn = syms.iter().find(|s| s.name == "private_fn");
+        assert!(private_fn.is_some(), "private_fn should be extracted");
+        assert!(private_fn.unwrap().visibility.is_none(),
+            "private_fn should have no visibility modifier");
+
+        let crate_fn = syms.iter().find(|s| s.name == "crate_fn");
+        assert!(crate_fn.is_some(), "crate_fn should be extracted");
+        assert_eq!(crate_fn.unwrap().visibility.as_deref(), Some("pub(crate)"),
+            "crate_fn should have pub(crate) visibility, got {:?}", crate_fn.unwrap().visibility);
+    }
+
+    #[test]
+    fn test_rust_tokio_test_extraction() {
+        let pack = rust_pack().unwrap();
+        let src = br#"
+#[tokio::test]
+async fn test_async_op() {
+    let x = 1;
+}
+"#;
+        let extraction = infigraph_core::extract::extract_file("lib.rs", src, &pack).unwrap();
+        let test_fn = extraction.symbols.iter().find(|s| s.name == "test_async_op");
+        assert!(test_fn.is_some(), "test_async_op should be extracted");
+        assert_eq!(test_fn.unwrap().kind, infigraph_core::model::SymbolKind::Test,
+            "tokio::test should produce Test kind, got {:?}", test_fn.unwrap().kind);
+    }
 }

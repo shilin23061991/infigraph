@@ -9,7 +9,7 @@ use infigraph_languages::bundled_registry;
 
 use super::watch::auto_start_watch;
 
-pub(crate) fn tool_group_list(_args: &Value) -> Result<String> {
+pub fn tool_group_list(_args: &Value) -> Result<String> {
     let registry = Registry::load()?;
 
     if registry.groups.is_empty() {
@@ -40,7 +40,7 @@ pub(crate) fn tool_group_list(_args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_group_create(args: &Value) -> Result<String> {
+pub fn tool_group_create(args: &Value) -> Result<String> {
     let name = args
         .get("name")
         .and_then(|n| n.as_str())
@@ -52,7 +52,7 @@ pub(crate) fn tool_group_create(args: &Value) -> Result<String> {
     Ok(format!("Group '{}' created.", name))
 }
 
-pub(crate) fn tool_group_add(args: &Value) -> Result<String> {
+pub fn tool_group_add(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -81,7 +81,7 @@ pub(crate) fn tool_group_add(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_group_query(args: &Value) -> Result<String> {
+pub fn tool_group_query(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -111,7 +111,7 @@ pub(crate) fn tool_group_query(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_group_sync(args: &Value) -> Result<String> {
+pub fn tool_group_sync(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -126,7 +126,7 @@ pub(crate) fn tool_group_sync(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_group_contracts(args: &Value) -> Result<String> {
+pub fn tool_group_contracts(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -159,7 +159,7 @@ pub(crate) fn tool_group_contracts(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_group_deps(args: &Value) -> Result<String> {
+pub fn tool_group_deps(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -198,7 +198,7 @@ pub(crate) fn tool_group_deps(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_group_index(args: &Value) -> Result<String> {
+pub fn tool_group_index(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())
@@ -235,7 +235,7 @@ pub(crate) fn tool_group_index(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_group_link(args: &Value) -> Result<String> {
+pub fn tool_group_link(args: &Value) -> Result<String> {
     let group_name = args
         .get("group_name")
         .and_then(|g| g.as_str())

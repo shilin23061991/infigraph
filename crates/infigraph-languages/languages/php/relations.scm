@@ -10,6 +10,7 @@
 
 ; Member calls: $obj->method()
 (member_call_expression
+  object: (_) @call.receiver
   name: (name) @call.func) @call.site
 
 ; Object creation: new Foo()

@@ -1,8 +1,9 @@
 ; C# relationship extraction queries
 
-; Method invocations
+; Method invocations: obj.Method()
 (invocation_expression
   function: (member_access_expression
+    expression: (_) @call.receiver
     name: (identifier) @call.func)) @call.site
 
 ; Simple invocations

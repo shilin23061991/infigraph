@@ -9,6 +9,26 @@ description = "CLI for infigraph — AST-powered code analysis and impact review
 name = "infigraph"
 path = "src/main.rs"
 
+[[bin]]
+name = "golden_export"
+path = "src/bin/golden_export.rs"
+
+[[bin]]
+name = "cozo_smoke"
+path = "src/bin/cozo_smoke.rs"
+
+[[bin]]
+name = "kuzu_to_cozo"
+path = "src/bin/kuzu_to_cozo.rs"
+
+[[bin]]
+name = "golden_cozo_export"
+path = "src/bin/golden_cozo_export.rs"
+
+[[bin]]
+name = "cozo_vs_kuzu"
+path = "src/bin/cozo_vs_kuzu.rs"
+
 [dependencies]
 infigraph-core.workspace = true
 infigraph-languages.workspace = true
@@ -16,9 +36,14 @@ infigraph-grammar-plugin = { path = "../infigraph-grammar-plugin" }
 infigraph-docs = { path = "../infigraph-docs" }
 infigraph-confluence = { path = "../infigraph-confluence" }
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "5"
 ctrlc = "3"
 rayon = "1"
 ureq = "2"
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+cozo = { version = "0.7.6", features = ["storage-sqlite"] }
+kuzu = { package = "lbug", version = "= 0.16.0" }

@@ -7,36 +7,34 @@ use serde_json::Value;
 use infigraph_core::Infigraph;
 use infigraph_languages::bundled_registry;
 
-pub(crate) struct WatcherEntry {
-    pub(crate) stop_tx: mpsc::Sender<()>,
-    pub(crate) path: String,
-    /// Files that changed and have cross-file calls — need full reindex
-    pub(crate) pending_reindex: Arc<Mutex<Vec<String>>>,
+pub struct WatcherEntry {
+    pub stop_tx: mpsc::Sender<()>,
+    pub path: String,
+    pub pending_reindex: Arc<Mutex<Vec<String>>>,
 }
 
-// Global registry of active watchers
-pub(crate) static WATCHERS: Mutex<Option<HashMap<String, WatcherEntry>>> = Mutex::new(None);
+pub static WATCHERS: Mutex<Option<HashMap<String, WatcherEntry>>> = Mutex::new(None);
 
-pub(crate) fn get_watchers() -> std::sync::MutexGuard<'static, Option<HashMap<String, WatcherEntry>>>
+pub fn get_watchers() -> std::sync::MutexGuard<'static, Option<HashMap<String, WatcherEntry>>>
 {
     WATCHERS.lock().unwrap()
 }
 
-pub(crate) fn init_watchers() {
+pub fn init_watchers() {
     let mut guard = WATCHERS.lock().unwrap();
     if guard.is_none() {
         *guard = Some(HashMap::new());
     }
 }
 
-pub(crate) fn is_watching(path: &str) -> bool {
+pub fn is_watching(path: &str) -> bool {
     let guard = WATCHERS.lock().unwrap();
     guard
         .as_ref()
         .is_some_and(|map| map.values().any(|e| e.path == path))
 }
 
-pub(crate) fn auto_start_watch(path: &str) -> Option<String> {
+pub fn auto_start_watch(path: &str) -> Option<String> {
     let root = std::path::PathBuf::from(path).canonicalize().ok()?;
     let root_str = root.to_string_lossy().replace('\\', "/");
 
@@ -61,7 +59,7 @@ pub(crate) fn auto_start_watch(path: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn tool_watch_project(args: &Value) -> Result<String> {
+pub fn tool_watch_project(args: &Value) -> Result<String> {
     init_watchers();
 
     let path = args
@@ -166,7 +164,7 @@ pub(crate) fn tool_watch_project(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_stop_watch(args: &Value) -> Result<String> {
+pub fn tool_stop_watch(args: &Value) -> Result<String> {
     let watcher_id = args
         .get("watcher_id")
         .and_then(|v| v.as_str())
@@ -182,7 +180,7 @@ pub(crate) fn tool_stop_watch(args: &Value) -> Result<String> {
     Ok(format!("No watcher found with ID: {watcher_id}"))
 }
 
-pub(crate) fn tool_get_watch_status(args: &Value) -> Result<String> {
+pub fn tool_get_watch_status(args: &Value) -> Result<String> {
     let watcher_id = args.get("watcher_id").and_then(|v| v.as_str());
 
     let guard = get_watchers();

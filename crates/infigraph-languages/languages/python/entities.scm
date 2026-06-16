@@ -1,4 +1,4 @@
-; Python entity extraction queries for infigraph
+; Python entity extraction queries for terragraph
 
 ; Top-level function definitions (undecorated)
 (module

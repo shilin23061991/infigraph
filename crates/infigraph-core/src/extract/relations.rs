@@ -10,7 +10,12 @@ use crate::model::{Relation, RelationKind, Span};
 ///   @import.module / @import.name    — imports
 ///   @inherit.child / @inherit.parent — inheritance
 ///   @{custom}.source / @{custom}.target — custom edges (from language pack custom_edges)
-pub fn extract_relations(file: &str, source: &[u8], root: Node, query: &Query) -> Vec<Relation> {
+pub fn extract_relations(
+    file: &str,
+    source: &[u8],
+    root: Node,
+    query: &Query,
+) -> Vec<Relation> {
     extract_relations_with_custom_edges(file, source, root, query, &[])
 }
 
@@ -35,8 +40,9 @@ pub fn extract_relations_with_custom_edges(
         let mut target_name = None;
         let mut site_node = None;
         let mut receiver_text = None;
-        let mut custom_source: Option<(String, String)> = None;
-        let mut custom_target: Option<(String, String)> = None;
+        // For custom edges: track source/target per capture prefix
+        let mut custom_source: Option<(String, String)> = None; // (edge_name, source_text)
+        let mut custom_target: Option<(String, String)> = None; // (edge_name, target_text)
         let mut custom_site_node: Option<Node> = None;
         let mut custom_edge_name: Option<String> = None;
 
@@ -81,6 +87,8 @@ pub fn extract_relations_with_custom_edges(
                     rel_kind = Some(RelationKind::Inherits);
                 }
                 other => {
+                    // Check for custom edge captures: "{capture}.source", "{capture}.target",
+                    // or "{capture}.site" (used to infer source from enclosing function)
                     if let Some((prefix, suffix)) = other.split_once('.') {
                         if let Some(edge_def) = custom_edges.iter().find(|e| e.capture == prefix) {
                             custom_edge_name = Some(edge_def.name.clone());
@@ -111,11 +119,15 @@ pub fn extract_relations_with_custom_edges(
                 custom_edge_name.unwrap_or_default()
             };
 
-            if !edge_name.is_empty() {
+            if edge_name.is_empty() {
+                // No edge name resolved — skip
+            } else {
                 let src_text = if let Some((_, src)) = custom_source {
                     src
                 } else if let Some(site) = custom_site_node {
-                    find_enclosing_function(site, source).unwrap_or_else(|| file.to_string())
+                    // No explicit source — infer from enclosing function
+                    find_enclosing_function(site, source)
+                        .unwrap_or_else(|| file.to_string())
                 } else {
                     file.to_string()
                 };
@@ -144,8 +156,8 @@ pub fn extract_relations_with_custom_edges(
 
         if rel_kind == Some(RelationKind::Calls) && source_name.is_none() {
             if let Some(site) = site_node {
-                source_name =
-                    find_enclosing_function(site, source).or_else(|| Some(file.to_string()));
+                source_name = find_enclosing_function(site, source)
+                    .or_else(|| Some(file.to_string()));
             }
         }
 
@@ -214,10 +226,25 @@ fn find_enclosing_function(node: Node, source: &[u8]) -> Option<String> {
                 return Some(node_text(name_node, source));
             }
         }
+        // Pascal: defProc → header (declProc) → name
+        // name may be identifier (bare) or genericDot (TClass.Method) — use rightmost identifier
+        if n.kind() == "defProc" {
+            if let Some(header) = n.child_by_field_name("header") {
+                if let Some(name_node) = header.child_by_field_name("name") {
+                    if name_node.kind() == "genericDot" {
+                        if let Some(rhs) = name_node.child_by_field_name("rhs") {
+                            return Some(node_text(rhs, source));
+                        }
+                    }
+                    return Some(node_text(name_node, source));
+                }
+            }
+        }
         if sql_container_kinds.contains(&n.kind()) {
             if let Some(obj_ref) = n.child_by_field_name("name") {
                 return Some(node_text(obj_ref, source));
             }
+            // Fallback: find first object_reference child
             let mut i = 0;
             while let Some(child) = n.child(i) {
                 if child.kind() == "object_reference" {
@@ -229,6 +256,7 @@ fn find_enclosing_function(node: Node, source: &[u8]) -> Option<String> {
             }
         }
         if n.kind() == "cte" {
+            // CTE: first child is identifier
             if let Some(id) = n.child(0) {
                 if id.kind() == "identifier" {
                     return Some(node_text(id, source));
@@ -243,19 +271,29 @@ fn find_enclosing_function(node: Node, source: &[u8]) -> Option<String> {
 /// Walk up the AST to find the enclosing class/struct/impl and return its name.
 fn find_enclosing_class(node: Node, source: &[u8]) -> Option<String> {
     let class_kinds = [
-        "class_definition",  // Python
-        "class_declaration", // Java, TS, JS, C#, Kotlin, Swift
-        "class",             // Ruby
-        "class_specifier",   // C/C++
-        "impl_item",         // Rust
-        "struct_item",       // Rust
-        "defmodule",         // Elixir
+        "class_definition",   // Python
+        "class_declaration",  // Java, TS, JS, C#, Kotlin, Swift
+        "class",              // Ruby
+        "class_specifier",    // C/C++
+        "impl_item",          // Rust
+        "struct_item",        // Rust
+        "defmodule",          // Elixir
     ];
     let mut current = node.parent();
     while let Some(n) = current {
         if class_kinds.contains(&n.kind()) {
             if let Some(name_node) = n.child_by_field_name("name") {
                 return Some(node_text(name_node, source));
+            }
+        }
+        // Pascal: declClass/declIntf is child of declType which has the name
+        if n.kind() == "declClass" || n.kind() == "declIntf" {
+            if let Some(parent) = n.parent() {
+                if parent.kind() == "declType" {
+                    if let Some(name_node) = parent.child_by_field_name("name") {
+                        return Some(node_text(name_node, source));
+                    }
+                }
             }
         }
         current = n.parent();

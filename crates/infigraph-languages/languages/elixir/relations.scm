@@ -7,6 +7,7 @@
 ; Remote function calls: Module.func()
 (call
   target: (dot
+    left: (_) @call.receiver
     right: (identifier) @call.func)) @call.site
 
 ; Pipe into function

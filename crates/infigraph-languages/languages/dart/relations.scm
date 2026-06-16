@@ -7,6 +7,7 @@
 ; Method calls: obj.method()
 (call_expression
   function: (member_expression
+    object: (_) @call.receiver
     property: (identifier) @call.func)) @call.site
 
 ; Import directives

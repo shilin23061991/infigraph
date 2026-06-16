@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::super::helpers::{open_prism, save_analysis};
 
-pub(crate) fn tool_detect_dead_code(args: &Value) -> Result<String> {
+pub fn tool_detect_dead_code(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -35,7 +35,7 @@ pub(crate) fn tool_detect_dead_code(args: &Value) -> Result<String> {
     }
 }
 
-pub(crate) fn tool_trace_callers(args: &Value) -> Result<String> {
+pub fn tool_trace_callers(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -53,7 +53,7 @@ pub(crate) fn tool_trace_callers(args: &Value) -> Result<String> {
     Ok(callers.join("\n"))
 }
 
-pub(crate) fn tool_trace_callees(args: &Value) -> Result<String> {
+pub fn tool_trace_callees(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -71,7 +71,7 @@ pub(crate) fn tool_trace_callees(args: &Value) -> Result<String> {
     Ok(callees.join("\n"))
 }
 
-pub(crate) fn tool_transitive_impact(args: &Value) -> Result<String> {
+pub fn tool_transitive_impact(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -95,7 +95,7 @@ pub(crate) fn tool_transitive_impact(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_architecture(args: &Value) -> Result<String> {
+pub fn tool_get_architecture(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -104,7 +104,7 @@ pub(crate) fn tool_get_architecture(args: &Value) -> Result<String> {
     build_architecture_report(&gq)
 }
 
-pub(crate) fn build_architecture_report(gq: &infigraph_core::graph::GraphQuery) -> Result<String> {
+pub fn build_architecture_report(gq: &infigraph_core::graph::GraphQuery) -> Result<String> {
     let mut out = String::new();
 
     // 1. Language breakdown
@@ -183,7 +183,7 @@ pub(crate) fn build_architecture_report(gq: &infigraph_core::graph::GraphQuery) 
     Ok(out)
 }
 
-pub(crate) fn tool_detect_clusters(args: &Value) -> Result<String> {
+pub fn tool_detect_clusters(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;

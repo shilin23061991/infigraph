@@ -1,2 +1,2 @@
 ; F# relationship extraction queries
-; Minimal - no relations to extract
+; Minimal — tree-sitter-fsharp grammar has limited node type support

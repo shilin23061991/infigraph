@@ -199,15 +199,16 @@ pub fn extract_entities(
             let parent = parent_class.map(|cls| format!("{}::{}", file, cls));
 
             let complexity = match sym_kind {
-                SymbolKind::Function | SymbolKind::Method | SymbolKind::Test => {
-                    cyclomatic_complexity(node)
-                }
+                SymbolKind::Function | SymbolKind::Method | SymbolKind::Test =>
+                    cyclomatic_complexity(node),
                 _ => 1,
             };
 
             let parameters = extract_child_text(node, "parameters", source);
             let return_type = extract_child_text(node, "return_type", source)
                 .or_else(|| extract_child_text(node, "result", source));
+
+            let visibility = extract_visibility(node, source);
 
             symbols.push(Symbol {
                 id,
@@ -217,7 +218,7 @@ pub fn extract_entities(
                 signature_hash,
                 parent,
                 language: language.to_string(),
-                visibility: None,
+                visibility,
                 docstring,
                 complexity,
                 parameters,
@@ -242,7 +243,7 @@ pub fn extract_entities(
                 end_line: node.end_position().row as u32 + 1,
                 end_col: node.end_position().column as u32,
             };
-            let id = format!("{}::{}", file, route_name.replace([' ', '/'], "_"));
+            let id = format!("{}::{}", file, route_name.replace(' ', "_").replace('/', "_"));
             let docstring = if handler.is_empty() {
                 Some(format!("route {} {}", method, path))
             } else {
@@ -254,14 +255,24 @@ pub fn extract_entities(
                 kind: SymbolKind::Route,
                 span,
                 signature_hash: hash_node(node, source),
+                parameters: None,
+                return_type: None,
                 parent: None,
                 language: language.to_string(),
                 visibility: None,
                 docstring,
                 complexity: 1,
-                parameters: None,
-                return_type: None,
             });
+        }
+    }
+
+    for sym in &mut symbols {
+        if matches!(sym.kind, SymbolKind::Function | SymbolKind::Method) {
+            if is_test_by_docstring(&sym.docstring)
+                || is_test_by_name_and_path(&sym.name, file, &sym.language)
+            {
+                sym.kind = SymbolKind::Test;
+            }
         }
     }
 
@@ -286,9 +297,7 @@ fn find_parent_class(node: Node, source: &[u8]) -> Option<String> {
     while let Some(n) = current {
         if n.kind() == "class_definition" {
             // The name child of a class_definition is the class name
-            return n
-                .child_by_field_name("name")
-                .map(|name_node| node_text(name_node, source));
+            return n.child_by_field_name("name").map(|name_node| node_text(name_node, source));
         }
         current = n.parent();
     }
@@ -301,11 +310,11 @@ fn find_parent_class(node: Node, source: &[u8]) -> Option<String> {
 fn find_preceding_attributes(node: Node, source: &[u8]) -> Option<String> {
     // Node kinds that represent decorators/attributes across languages
     const ATTR_KINDS: &[&str] = &[
-        "attribute_item",    // Rust: #[get("/path")]
-        "attribute_list",    // C#: [HttpGet], PHP 8: #[Route("/path")]
-        "attribute",         // C# inner, PHP inner
-        "annotation",        // Kotlin, Scala, Java (fallback)
-        "decorator",         // TypeScript/JS (NestJS @Controller, @Get)
+        "attribute_item",   // Rust: #[get("/path")]
+        "attribute_list",   // C#: [HttpGet], PHP 8: #[Route("/path")]
+        "attribute",        // C# inner, PHP inner
+        "annotation",       // Kotlin, Scala, Java (fallback)
+        "decorator",        // TypeScript/JS (NestJS @Controller, @Get)
         "marker_annotation", // Java @Override, @GetMapping
     ];
 
@@ -348,11 +357,8 @@ fn collect_attrs(
         } else if comment_kinds.contains(&sib.kind()) {
             // Only capture annotation-like comments: // @Router, /// @route, # @app.route
             let text = node_text(sib, source);
-            if text.contains("@")
-                || text.contains("route")
-                || text.contains("endpoint")
-                || text.contains("handler")
-                || text.contains("API")
+            if text.contains("@") || text.contains("route") || text.contains("endpoint")
+                || text.contains("handler") || text.contains("API")
             {
                 attrs.push(text);
             }
@@ -370,10 +376,255 @@ fn node_text(node: Node, source: &[u8]) -> String {
 fn extract_child_text(node: Node, field_name: &str, source: &[u8]) -> Option<String> {
     let child = node.child_by_field_name(field_name)?;
     let text = child.utf8_text(source).ok()?.trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Extract visibility from AST node. Works across languages by checking for
+/// common visibility-related child node kinds.
+fn extract_visibility(node: Node, source: &[u8]) -> Option<String> {
+    // Check named children for visibility-related node kinds
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            // Rust: pub, pub(crate), pub(super)
+            "visibility_modifier" => {
+                let text = child.utf8_text(source).ok()?.trim().to_string();
+                return Some(text);
+            }
+            // Java/C#/Kotlin/Groovy: modifiers node containing access keywords
+            "modifiers" | "modifier_list" => {
+                let mut mod_cursor = child.walk();
+                for modifier in child.children(&mut mod_cursor) {
+                    let kind = modifier.kind();
+                    if kind == "public" || kind == "private" || kind == "protected" || kind == "internal" {
+                        return Some(kind.to_string());
+                    }
+                    // C#/Java text-based modifier check
+                    if let Ok(text) = modifier.utf8_text(source) {
+                        let t = text.trim();
+                        if t == "public" || t == "private" || t == "protected" || t == "internal" {
+                            return Some(t.to_string());
+                        }
+                    }
+                }
+            }
+            // Swift: modifier with visibility_modifier child
+            "modifier" => {
+                if let Ok(text) = child.utf8_text(source) {
+                    let t = text.trim();
+                    if t == "public" || t == "private" || t == "internal" || t == "fileprivate" || t == "open" {
+                        return Some(t.to_string());
+                    }
+                }
+            }
+            // Direct keyword children (some grammars)
+            "public" | "private" | "protected" | "internal" => {
+                return Some(child.kind().to_string());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+const TEST_ATTR_PATTERNS: &[&str] = &[
+    "#[test]", "#[tokio::test]", "#[rstest]", "#[test_case",
+    "@Test", "@ParameterizedTest", "@RepeatedTest",
+    "[Test]", "[Fact]", "[Theory]", "[TestMethod]",
+    "@pytest.mark", "@unittest",
+];
+
+fn is_test_by_docstring(docstring: &Option<String>) -> bool {
+    match docstring {
+        Some(doc) => TEST_ATTR_PATTERNS.iter().any(|pat| doc.contains(pat)),
+        None => false,
+    }
+}
+
+fn is_test_by_name_and_path(name: &str, file: &str, language: &str) -> bool {
+    let file_lower = file.to_lowercase();
+    let in_test_dir = file_lower.contains("/test/")
+        || file_lower.contains("/tests/")
+        || file_lower.contains("/__tests__/")
+        || file_lower.contains("/spec/")
+        || file_lower.starts_with("test/")
+        || file_lower.starts_with("tests/")
+        || file_lower.starts_with("spec/")
+        || file_lower.starts_with("__tests__/");
+
+    match language {
+        // JS/TS: *.test.ts, *.spec.js, __tests__/ with describe/it/test
+        "typescript" | "javascript" => {
+            file_lower.ends_with(".test.ts")
+                || file_lower.ends_with(".test.tsx")
+                || file_lower.ends_with(".test.js")
+                || file_lower.ends_with(".test.jsx")
+                || file_lower.ends_with(".test.mjs")
+                || file_lower.ends_with(".spec.ts")
+                || file_lower.ends_with(".spec.tsx")
+                || file_lower.ends_with(".spec.js")
+                || file_lower.ends_with(".spec.jsx")
+                || (in_test_dir && (name == "it" || name == "test" || name == "describe"))
+        }
+        // Go: func TestXxx in _test.go
+        "go" => {
+            file_lower.ends_with("_test.go")
+                && (name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Fuzz"))
+        }
+        // Python: test_ prefix in test files/dirs, or pytest/unittest via docstring (handled separately)
+        "python" => {
+            name.starts_with("test_")
+                && (file_lower.contains("test_") || file_lower.ends_with("_test.py") || in_test_dir)
+        }
+        // Ruby: RSpec it/describe in _spec.rb, Minitest test_ in _test.rb
+        "ruby" => {
+            (name.starts_with("test_") && in_test_dir)
+                || (file_lower.ends_with("_spec.rb") && (name == "it" || name == "specify" || name == "describe" || name == "context"))
+                || (file_lower.ends_with("_test.rb") && name.starts_with("test_"))
+        }
+        // PHP: PHPUnit test* methods in *Test.php
+        "php" => {
+            name.starts_with("test") && (file_lower.ends_with("test.php") || in_test_dir)
+        }
+        // Swift: XCTest func testXxx in *Tests.swift
+        "swift" => {
+            name.starts_with("test")
+                && (file_lower.ends_with("tests.swift") || file_lower.ends_with("test.swift") || in_test_dir)
+        }
+        // Scala: ScalaTest it/test/describe in spec/test dirs or files
+        "scala" => {
+            (in_test_dir || file_lower.contains("src/test/"))
+                && (name == "test" || name == "it" || name == "describe"
+                    || file_lower.ends_with("spec.scala") || file_lower.ends_with("test.scala"))
+        }
+        // Dart: *_test.dart files, test()/testWidgets()/group() in test/
+        "dart" => {
+            file_lower.ends_with("_test.dart")
+                || (in_test_dir && (name == "test" || name == "testWidgets" || name == "group"))
+        }
+        // Elixir: test macro in *_test.exs
+        "elixir" => {
+            file_lower.ends_with("_test.exs")
+                && (name == "test" || name.starts_with("test ") || name == "describe")
+        }
+        // Lua: busted describe/it/spec, or in spec/ or test/ dirs
+        "lua" => {
+            in_test_dir
+                && (name == "describe" || name == "it" || name == "spec" || name == "pending")
+        }
+        // Perl: Test::More/Test2 — functions in .t files
+        "perl" => {
+            file_lower.ends_with(".t")
+        }
+        // R: testthat test_that() in test/ dirs
+        "r" => {
+            in_test_dir && (name == "test_that" || name.starts_with("test_"))
+        }
+        // Julia: @test macro in test/ dir or runtests.jl
+        "julia" => {
+            in_test_dir || file_lower.ends_with("runtests.jl")
+        }
+        // Haskell: HSpec describe/it, or HUnit test* in test/ or spec/
+        "haskell" => {
+            (in_test_dir || file_lower.contains("/spec/"))
+                && (name == "describe" || name == "it" || name == "spec" || name.starts_with("test"))
+        }
+        // Erlang: EUnit test_/0, Common Test *_SUITE in test/
+        "erlang" => {
+            (file_lower.ends_with("_test.erl") || file_lower.ends_with("_tests.erl") || file_lower.ends_with("_suite.erl"))
+                || (in_test_dir && name.starts_with("test_"))
+        }
+        // Zig: test blocks — zig names them "test" or "test \"description\""
+        "zig" => {
+            name == "test" || name.starts_with("test ")
+        }
+        // F#: NUnit/xUnit [Test]/[Fact] via docstring (retag handles), Expecto testCase in test dirs
+        "fsharp" => {
+            in_test_dir && (name == "testCase" || name == "testList" || name.starts_with("test"))
+        }
+        // Groovy: Spock where/then in *Spec.groovy, JUnit via docstring retag
+        "groovy" => {
+            file_lower.ends_with("spec.groovy") || file_lower.ends_with("test.groovy")
+                || (in_test_dir && name.starts_with("test"))
+        }
+        // Kotlin: JUnit @Test via docstring retag, kotest describe/it in test dirs
+        "kotlin" => {
+            in_test_dir && (name == "describe" || name == "it" || name == "test" || name.starts_with("test"))
+        }
+        // C#: NUnit/xUnit/MSTest via docstring retag, this catches test dir heuristic
+        "csharp" => {
+            (file_lower.ends_with("test.cs") || file_lower.ends_with("tests.cs"))
+                && name.starts_with("Test")
+        }
+        // Objective-C: XCTest testXxx in *Tests.m
+        "objc" => {
+            name.starts_with("test")
+                && (file_lower.ends_with("tests.m") || file_lower.ends_with("test.m") || in_test_dir)
+        }
+        // OCaml: Alcotest/OUnit test_ in test/ dir
+        "ocaml" => {
+            in_test_dir && name.starts_with("test")
+        }
+        // Fortran: pFUnit test_ in test/ dir
+        "fortran" => {
+            in_test_dir && name.starts_with("test")
+        }
+        // PowerShell: Pester Describe/It/Context in *.Tests.ps1
+        "powershell" => {
+            file_lower.ends_with(".tests.ps1")
+                && (name == "Describe" || name == "It" || name == "Context")
+        }
+        // Bash: bats @test in .bats files, or test_ functions in test/ dir
+        "bash" => {
+            file_lower.ends_with(".bats")
+                || (in_test_dir && name.starts_with("test_"))
+        }
+        // Svelte: same as JS/TS — *.test.ts patterns
+        "svelte" => {
+            file_lower.ends_with(".test.ts") || file_lower.ends_with(".spec.ts") || in_test_dir
+        }
+        // C++: GTest TEST/TEST_F/TEST_P, Catch2 TEST_CASE/SCENARIO, Boost test*
+        "cpp" => {
+            (name == "TEST" || name == "TEST_F" || name == "TEST_P"
+                || name == "TEST_CASE" || name == "SCENARIO" || name == "SECTION"
+                || name == "BOOST_AUTO_TEST_CASE" || name == "BOOST_FIXTURE_TEST_CASE")
+                || (in_test_dir && name.starts_with("test"))
+                || file_lower.ends_with("_test.cpp") || file_lower.ends_with("_test.cc")
+                || file_lower.ends_with("_tests.cpp") || file_lower.ends_with("_tests.cc")
+        }
+        // C: CUnit, Unity, Check — test_ prefix in test files/dirs
+        "c" => {
+            (in_test_dir && name.starts_with("test"))
+                || file_lower.ends_with("_test.c") || file_lower.ends_with("_tests.c")
+        }
+        // CUDA: same as C++ patterns
+        "cuda" => {
+            (name == "TEST" || name == "TEST_F" || name == "TEST_P")
+                || (in_test_dir && name.starts_with("test"))
+                || file_lower.ends_with("_test.cu")
+        }
+        // Clojure: deftest macro — name is the test function name, file in test/ dir
+        "clojure" => {
+            in_test_dir
+                || file_lower.ends_with("_test.clj") || file_lower.ends_with("_test.cljc")
+        }
+        // Elm: Test.describe/Test.test in tests/ dir
+        "elm" => {
+            in_test_dir
+                || (name == "describe" || name == "test" || name == "fuzz")
+                    && file_lower.contains("test")
+        }
+        // Common Lisp: FiveAM def-test, in test/ dirs
+        "commonlisp" => {
+            in_test_dir && (name.starts_with("test") || name == "def-test")
+        }
+        // Pascal: DUnit/FPCUnit test* methods in *Test.pas
+        "pascal" => {
+            name.starts_with("Test")
+                && (file_lower.ends_with("test.pas") || file_lower.ends_with("tests.pas") || in_test_dir)
+        }
+        // Rust/Java/C#/Kotlin: handled by docstring retag
+        _ => false,
     }
 }
 
@@ -399,14 +650,8 @@ fn strip_string_delimiters(s: &str) -> String {
 /// Strip triple-quote delimiters and leading whitespace from a docstring.
 fn strip_docstring(raw: &str) -> String {
     let s = raw.trim();
-    let s = s
-        .strip_prefix("\"\"\"")
-        .or_else(|| s.strip_prefix("'''"))
-        .unwrap_or(s);
-    let s = s
-        .strip_suffix("\"\"\"")
-        .or_else(|| s.strip_suffix("'''"))
-        .unwrap_or(s);
+    let s = s.strip_prefix("\"\"\"").or_else(|| s.strip_prefix("'''")).unwrap_or(s);
+    let s = s.strip_suffix("\"\"\"").or_else(|| s.strip_suffix("'''")).unwrap_or(s);
     // Dedent: find minimum indentation and strip it
     let lines: Vec<&str> = s.lines().collect();
     if lines.len() <= 1 {
@@ -457,8 +702,7 @@ mod tests {
         let query = tree_sitter::Query::new(
             &grammar,
             r#"(assignment left: (identifier) @module.name) @module.def"#,
-        )
-        .unwrap();
+        ).unwrap();
 
         let symbols = extract_entities("test.bas", src, root, &query, "vb6");
         assert_eq!(symbols.len(), 1);
@@ -478,25 +722,17 @@ mod tests {
         let query = tree_sitter::Query::new(
             &grammar,
             "(function_definition name: (identifier) @func.name) @func.def",
-        )
-        .unwrap();
+        ).unwrap();
 
         let symbols = extract_entities("greet.py", src, root, &query, "python");
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "greet");
-        assert!(
-            symbols[0].parameters.is_some(),
-            "parameters should be extracted"
-        );
+        assert!(symbols[0].parameters.is_some(), "parameters should be extracted");
         assert!(
             symbols[0].parameters.as_deref().unwrap().contains("name"),
-            "parameters should contain param names: {:?}",
-            symbols[0].parameters
+            "parameters should contain param names: {:?}", symbols[0].parameters
         );
-        assert!(
-            symbols[0].return_type.is_some(),
-            "return_type should be extracted for typed Python"
-        );
+        assert!(symbols[0].return_type.is_some(), "return_type should be extracted for typed Python");
         assert_eq!(symbols[0].return_type.as_deref(), Some("str"));
     }
 
@@ -512,15 +748,262 @@ mod tests {
         let query = tree_sitter::Query::new(
             &grammar,
             "(function_definition name: (identifier) @func.name) @func.def",
-        )
-        .unwrap();
+        ).unwrap();
 
         let symbols = extract_entities("hello.py", src, root, &query, "python");
         assert_eq!(symbols.len(), 1);
         assert!(symbols[0].parameters.is_some());
-        assert!(
-            symbols[0].return_type.is_none(),
-            "no return type annotation"
-        );
+        assert!(symbols[0].return_type.is_none(), "no return type annotation");
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_go() {
+        assert!(is_test_by_name_and_path("TestFoo", "pkg/auth/auth_test.go", "go"));
+        assert!(is_test_by_name_and_path("BenchmarkHash", "hash_test.go", "go"));
+        assert!(is_test_by_name_and_path("FuzzParse", "parse_test.go", "go"));
+        assert!(!is_test_by_name_and_path("TestFoo", "pkg/auth/auth.go", "go"));
+        assert!(!is_test_by_name_and_path("helper", "auth_test.go", "go"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_typescript() {
+        assert!(is_test_by_name_and_path("it", "src/auth.test.ts", "typescript"));
+        assert!(is_test_by_name_and_path("describe", "src/auth.spec.tsx", "typescript"));
+        assert!(is_test_by_name_and_path("test", "src/__tests__/auth.ts", "typescript"));
+        assert!(!is_test_by_name_and_path("it", "src/auth.ts", "typescript"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_javascript() {
+        assert!(is_test_by_name_and_path("it", "src/utils.test.js", "javascript"));
+        assert!(is_test_by_name_and_path("test", "src/utils.spec.jsx", "javascript"));
+        assert!(is_test_by_name_and_path("describe", "src/utils.test.mjs", "javascript"));
+        assert!(!is_test_by_name_and_path("render", "src/utils.js", "javascript"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_python() {
+        assert!(is_test_by_name_and_path("test_login", "tests/test_auth.py", "python"));
+        assert!(is_test_by_name_and_path("test_foo", "test/test_foo.py", "python"));
+        assert!(is_test_by_name_and_path("test_bar", "src/bar_test.py", "python"));
+        assert!(!is_test_by_name_and_path("helper", "tests/test_auth.py", "python"));
+        assert!(!is_test_by_name_and_path("test_login", "src/auth.py", "python"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_ruby() {
+        assert!(is_test_by_name_and_path("it", "spec/models/user_spec.rb", "ruby"));
+        assert!(is_test_by_name_and_path("describe", "spec/auth_spec.rb", "ruby"));
+        assert!(is_test_by_name_and_path("test_login", "test/auth_test.rb", "ruby"));
+        assert!(!is_test_by_name_and_path("helper", "spec/user_spec.rb", "ruby"));
+        assert!(!is_test_by_name_and_path("it", "app/models/user.rb", "ruby"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_php() {
+        assert!(is_test_by_name_and_path("testLogin", "tests/AuthTest.php", "php"));
+        assert!(is_test_by_name_and_path("testCreate", "test/UserTest.php", "php"));
+        assert!(!is_test_by_name_and_path("helper", "tests/AuthTest.php", "php"));
+        assert!(!is_test_by_name_and_path("testLogin", "src/Auth.php", "php"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_swift() {
+        assert!(is_test_by_name_and_path("testLogin", "AuthTests.swift", "swift"));
+        assert!(is_test_by_name_and_path("testFoo", "Tests/FooTest.swift", "swift"));
+        assert!(!is_test_by_name_and_path("helper", "AuthTests.swift", "swift"));
+        assert!(!is_test_by_name_and_path("testLogin", "Sources/Auth.swift", "swift"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_elixir() {
+        assert!(is_test_by_name_and_path("test", "test/auth_test.exs", "elixir"));
+        assert!(is_test_by_name_and_path("describe", "test/user_test.exs", "elixir"));
+        assert!(!is_test_by_name_and_path("test", "lib/auth.ex", "elixir"));
+        assert!(!is_test_by_name_and_path("helper", "test/auth_test.exs", "elixir"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_lua() {
+        assert!(is_test_by_name_and_path("describe", "spec/auth_spec.lua", "lua"));
+        assert!(is_test_by_name_and_path("it", "test/utils_test.lua", "lua"));
+        assert!(!is_test_by_name_and_path("describe", "src/auth.lua", "lua"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_perl() {
+        assert!(is_test_by_name_and_path("subtest", "t/auth.t", "perl"));
+        assert!(is_test_by_name_and_path("ok", "t/01-basic.t", "perl"));
+        assert!(!is_test_by_name_and_path("ok", "lib/Auth.pm", "perl"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_r() {
+        assert!(is_test_by_name_and_path("test_that", "tests/test-auth.R", "r"));
+        assert!(is_test_by_name_and_path("test_login", "tests/testthat/test-login.R", "r"));
+        assert!(!is_test_by_name_and_path("test_that", "R/auth.R", "r"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_julia() {
+        assert!(is_test_by_name_and_path("foo", "test/runtests.jl", "julia"));
+        assert!(is_test_by_name_and_path("bar", "test/auth_tests.jl", "julia"));
+        assert!(!is_test_by_name_and_path("foo", "src/Auth.jl", "julia"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_haskell() {
+        assert!(is_test_by_name_and_path("describe", "test/AuthSpec.hs", "haskell"));
+        assert!(is_test_by_name_and_path("it", "spec/AuthSpec.hs", "haskell"));
+        assert!(is_test_by_name_and_path("testLogin", "test/Auth.hs", "haskell"));
+        assert!(!is_test_by_name_and_path("describe", "src/Auth.hs", "haskell"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_erlang() {
+        assert!(is_test_by_name_and_path("test_login", "test/auth_test.erl", "erlang"));
+        assert!(is_test_by_name_and_path("init", "test/auth_SUITE.erl", "erlang"));
+        assert!(is_test_by_name_and_path("test_foo", "test/bar_tests.erl", "erlang"));
+        assert!(!is_test_by_name_and_path("handle_call", "src/auth.erl", "erlang"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_zig() {
+        assert!(is_test_by_name_and_path("test", "src/auth.zig", "zig"));
+        assert!(is_test_by_name_and_path("test allocator", "src/mem.zig", "zig"));
+        assert!(!is_test_by_name_and_path("init", "src/auth.zig", "zig"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_fsharp() {
+        assert!(is_test_by_name_and_path("testCase", "tests/AuthTests.fs", "fsharp"));
+        assert!(is_test_by_name_and_path("testLogin", "test/Auth.fs", "fsharp"));
+        assert!(!is_test_by_name_and_path("testCase", "src/Auth.fs", "fsharp"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_groovy() {
+        assert!(is_test_by_name_and_path("testLogin", "src/test/AuthSpec.groovy", "groovy"));
+        assert!(is_test_by_name_and_path("foo", "AuthTest.groovy", "groovy"));
+        assert!(!is_test_by_name_and_path("handle", "src/Auth.groovy", "groovy"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_kotlin() {
+        assert!(is_test_by_name_and_path("testLogin", "src/test/AuthTest.kt", "kotlin"));
+        assert!(is_test_by_name_and_path("describe", "test/AuthSpec.kt", "kotlin"));
+        assert!(!is_test_by_name_and_path("handle", "src/Auth.kt", "kotlin"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_csharp() {
+        assert!(is_test_by_name_and_path("TestLogin", "AuthTest.cs", "csharp"));
+        assert!(is_test_by_name_and_path("TestCreate", "UserTests.cs", "csharp"));
+        assert!(!is_test_by_name_and_path("TestLogin", "Auth.cs", "csharp"));
+        assert!(!is_test_by_name_and_path("Handle", "AuthTest.cs", "csharp"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_objc() {
+        assert!(is_test_by_name_and_path("testLogin", "AuthTests.m", "objc"));
+        assert!(is_test_by_name_and_path("testFoo", "tests/FooTest.m", "objc"));
+        assert!(!is_test_by_name_and_path("viewDidLoad", "Auth.m", "objc"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_ocaml() {
+        assert!(is_test_by_name_and_path("test_login", "test/auth_test.ml", "ocaml"));
+        assert!(!is_test_by_name_and_path("test_login", "lib/auth.ml", "ocaml"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_powershell() {
+        assert!(is_test_by_name_and_path("Describe", "Auth.Tests.ps1", "powershell"));
+        assert!(is_test_by_name_and_path("It", "Auth.Tests.ps1", "powershell"));
+        assert!(!is_test_by_name_and_path("Describe", "Auth.ps1", "powershell"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_bash() {
+        assert!(is_test_by_name_and_path("run", "test/auth.bats", "bash"));
+        assert!(is_test_by_name_and_path("test_login", "test/auth_test.sh", "bash"));
+        assert!(!is_test_by_name_and_path("main", "src/auth.sh", "bash"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_dart() {
+        assert!(is_test_by_name_and_path("test", "test/auth_test.dart", "dart"));
+        assert!(is_test_by_name_and_path("testWidgets", "test/widget_test.dart", "dart"));
+        assert!(!is_test_by_name_and_path("build", "lib/auth.dart", "dart"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_scala() {
+        assert!(is_test_by_name_and_path("test", "src/test/AuthSpec.scala", "scala"));
+        assert!(is_test_by_name_and_path("it", "src/test/AuthTest.scala", "scala"));
+        assert!(!is_test_by_name_and_path("handle", "src/main/Auth.scala", "scala"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_fortran() {
+        assert!(is_test_by_name_and_path("test_solve", "test/test_solver.f90", "fortran"));
+        assert!(!is_test_by_name_and_path("solve", "src/solver.f90", "fortran"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_cpp() {
+        assert!(is_test_by_name_and_path("TEST", "test/auth_test.cpp", "cpp"));
+        assert!(is_test_by_name_and_path("TEST_F", "test/auth_test.cc", "cpp"));
+        assert!(is_test_by_name_and_path("TEST_CASE", "test/auth.cpp", "cpp"));
+        assert!(is_test_by_name_and_path("SCENARIO", "test/auth.cpp", "cpp"));
+        assert!(is_test_by_name_and_path("testAuth", "src/auth_test.cpp", "cpp"));
+        assert!(!is_test_by_name_and_path("main", "src/auth.cpp", "cpp"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_c() {
+        assert!(is_test_by_name_and_path("test_auth", "test/test_auth.c", "c"));
+        assert!(is_test_by_name_and_path("test_parse", "src/parse_test.c", "c"));
+        assert!(!is_test_by_name_and_path("main", "src/auth.c", "c"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_cuda() {
+        assert!(is_test_by_name_and_path("TEST", "test/kernel_test.cu", "cuda"));
+        assert!(is_test_by_name_and_path("TEST_F", "test/kernel.cu", "cuda"));
+        assert!(!is_test_by_name_and_path("launch_kernel", "src/kernel.cu", "cuda"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_clojure() {
+        assert!(is_test_by_name_and_path("deftest", "test/auth_test.clj", "clojure"));
+        assert!(is_test_by_name_and_path("my-test", "test/core_test.cljc", "clojure"));
+        assert!(!is_test_by_name_and_path("handler", "src/auth.clj", "clojure"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_elm() {
+        assert!(is_test_by_name_and_path("describe", "tests/AuthTest.elm", "elm"));
+        assert!(is_test_by_name_and_path("test", "tests/Suite.elm", "elm"));
+        assert!(!is_test_by_name_and_path("view", "src/Auth.elm", "elm"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_commonlisp() {
+        assert!(is_test_by_name_and_path("test-auth", "test/auth-test.lisp", "commonlisp"));
+        assert!(is_test_by_name_and_path("def-test", "tests/suite.lisp", "commonlisp"));
+        assert!(!is_test_by_name_and_path("handle", "src/auth.lisp", "commonlisp"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_pascal() {
+        assert!(is_test_by_name_and_path("TestLogin", "tests/AuthTest.pas", "pascal"));
+        assert!(is_test_by_name_and_path("TestCreate", "test/UserTests.pas", "pascal"));
+        assert!(!is_test_by_name_and_path("HandleClick", "src/Auth.pas", "pascal"));
+    }
+
+    #[test]
+    fn test_is_test_by_name_and_path_unknown_language() {
+        assert!(!is_test_by_name_and_path("test", "test/foo.xxx", "unknown_lang"));
     }
 }

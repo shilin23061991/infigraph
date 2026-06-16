@@ -1,5 +1,6 @@
 use anyhow::Result;
 use kuzu::Connection;
+use serde::Serialize;
 
 /// High-level graph query interface for analysis.
 pub struct GraphQuery<'a, 'db> {
@@ -374,7 +375,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
 
         let total = covered.len() + uncovered.len();
         let pct = if total > 0 {
-            covered.len().checked_div(total).unwrap_or(0) * 100
+            (covered.len() * 100) / total
         } else {
             0
         };
@@ -617,7 +618,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SymbolRow {
     pub id: String,
     pub name: String,
@@ -627,7 +628,7 @@ pub struct SymbolRow {
 }
 
 /// Extended symbol info including file path (for snippet retrieval).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SymbolDetail {
     pub id: String,
     pub name: String,
@@ -637,7 +638,7 @@ pub struct SymbolDetail {
     pub end_line: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ImpactRow {
     pub id: String,
     pub name: String,
@@ -645,7 +646,7 @@ pub struct ImpactRow {
     pub kind: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ReferenceRow {
     pub caller_id: String,
     pub caller_name: String,
@@ -654,7 +655,7 @@ pub struct ReferenceRow {
     pub target_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ApiSymbol {
     pub id: String,
     pub name: String,
@@ -665,14 +666,14 @@ pub struct ApiSymbol {
     pub docstring: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct FileDeps {
     pub file: String,
     pub imports: Vec<String>,
     pub imported_by: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct HierarchyNode {
     pub id: String,
     pub name: String,
@@ -680,7 +681,7 @@ pub struct HierarchyNode {
     pub file: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TypeHierarchy {
     pub root_id: String,
     pub root_name: String,
@@ -688,7 +689,7 @@ pub struct TypeHierarchy {
     pub descendants: Vec<HierarchyNode>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CoverageRow {
     pub symbol_id: String,
     pub symbol_name: String,
@@ -697,7 +698,7 @@ pub struct CoverageRow {
     pub test_id: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TestCoverage {
     pub covered_count: usize,
     pub uncovered_count: usize,
@@ -706,7 +707,7 @@ pub struct TestCoverage {
     pub uncovered: Vec<CoverageRow>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct BranchInfo {
     pub kind: String,
     pub condition: String,
@@ -714,7 +715,7 @@ pub struct BranchInfo {
     pub depth: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TestTarget {
     pub symbol_id: String,
     pub name: String,
@@ -732,14 +733,14 @@ pub struct TestTarget {
     pub priority_score: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TestContext {
     pub framework: String,
     pub example_test: Option<ExampleTest>,
     pub targets: Vec<TestTarget>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ExampleTest {
     pub symbol_id: String,
     pub name: String,

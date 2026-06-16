@@ -5,7 +5,7 @@ use infigraph_core::embed;
 
 use super::super::helpers::open_prism;
 
-pub(crate) fn tool_detect_clones(args: &Value) -> Result<String> {
+pub fn tool_detect_clones(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let threshold = args
         .get("threshold")
@@ -139,7 +139,7 @@ pub(crate) fn tool_detect_clones(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_refactor(args: &Value) -> Result<String> {
+pub fn tool_refactor(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;

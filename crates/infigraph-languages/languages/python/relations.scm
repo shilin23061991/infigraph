@@ -1,4 +1,4 @@
-; Python relationship extraction queries for infigraph
+; Python relationship extraction queries for terragraph
 
 ; Function/method calls
 (call
@@ -7,6 +7,7 @@
 ; Method calls on objects (obj.method())
 (call
   function: (attribute
+    object: (_) @call.receiver
     attribute: (identifier) @call.func)) @call.site
 
 ; Import statements: import foo
@@ -22,3 +23,15 @@
   name: (identifier) @inherit.child
   superclasses: (argument_list
     (identifier) @inherit.parent))
+
+; Decorator on a function: @decorator def func()
+(decorated_definition
+  (decorator (identifier) @decorates.target)
+  definition: (function_definition
+    name: (identifier) @decorates.source))
+
+; Decorator on a class: @decorator class Foo
+(decorated_definition
+  (decorator (identifier) @decorates.target)
+  definition: (class_definition
+    name: (identifier) @decorates.source))

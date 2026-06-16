@@ -8,7 +8,7 @@ use infigraph_languages::bundled_registry;
 
 use super::helpers::{glob_matches, open_prism};
 
-pub(crate) fn tool_query_graph(args: &Value) -> Result<String> {
+pub fn tool_query_graph(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let cypher = args
         .get("cypher")
@@ -31,7 +31,7 @@ pub(crate) fn tool_query_graph(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_symbols_in_file(args: &Value) -> Result<String> {
+pub fn tool_get_symbols_in_file(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let file = args
         .get("file")
@@ -56,13 +56,13 @@ pub(crate) fn tool_get_symbols_in_file(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_stats(args: &Value) -> Result<String> {
+pub fn tool_get_stats(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let stats = prism.stats()?;
     Ok(format!("{}", stats))
 }
 
-pub(crate) fn tool_get_code_snippet(args: &Value) -> Result<String> {
+pub fn tool_get_code_snippet(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -92,7 +92,7 @@ pub(crate) fn tool_get_code_snippet(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_list_projects(_args: &Value) -> Result<String> {
+pub fn tool_list_projects(_args: &Value) -> Result<String> {
     let registry = Registry::load()?;
 
     if registry.repos.is_empty() {
@@ -113,7 +113,7 @@ pub(crate) fn tool_list_projects(_args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_delete_project(args: &Value) -> Result<String> {
+pub fn tool_delete_project(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -162,7 +162,7 @@ pub(crate) fn tool_delete_project(args: &Value) -> Result<String> {
     }
 }
 
-pub(crate) fn tool_list_languages(_args: &Value) -> Result<String> {
+pub fn tool_list_languages(_args: &Value) -> Result<String> {
     let registry = bundled_registry()?;
     let mut out = String::new();
     let mut count = 0;
@@ -177,7 +177,7 @@ pub(crate) fn tool_list_languages(_args: &Value) -> Result<String> {
     Ok(format!("Supported languages ({}):\n{}", count, out))
 }
 
-pub(crate) fn tool_get_graph_schema(args: &Value) -> Result<String> {
+pub fn tool_get_graph_schema(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let stats = prism.stats()?;
     let store = prism.store().context("not initialized")?;
@@ -222,7 +222,7 @@ pub(crate) fn tool_get_graph_schema(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_symbol_context(args: &Value) -> Result<String> {
+pub fn tool_symbol_context(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -293,7 +293,7 @@ pub(crate) fn tool_symbol_context(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_detect_routes(args: &Value) -> Result<String> {
+pub fn tool_detect_routes(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -303,7 +303,7 @@ pub(crate) fn tool_detect_routes(args: &Value) -> Result<String> {
     Ok(infigraph_core::routes::format_routes(&routes))
 }
 
-pub(crate) fn tool_find_all_references(args: &Value) -> Result<String> {
+pub fn tool_find_all_references(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -326,7 +326,7 @@ pub(crate) fn tool_find_all_references(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_api_surface(args: &Value) -> Result<String> {
+pub fn tool_get_api_surface(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -372,7 +372,7 @@ pub(crate) fn tool_get_api_surface(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_file_deps(args: &Value) -> Result<String> {
+pub fn tool_get_file_deps(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -405,7 +405,7 @@ pub(crate) fn tool_get_file_deps(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_type_hierarchy(args: &Value) -> Result<String> {
+pub fn tool_get_type_hierarchy(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -439,7 +439,7 @@ pub(crate) fn tool_get_type_hierarchy(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_test_coverage(args: &Value) -> Result<String> {
+pub fn tool_get_test_coverage(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -488,7 +488,7 @@ pub(crate) fn tool_get_test_coverage(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_complexity(args: &Value) -> Result<String> {
+pub fn tool_get_complexity(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -565,7 +565,7 @@ pub(crate) fn tool_get_complexity(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_doc_context(args: &Value) -> Result<String> {
+pub fn tool_get_doc_context(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")
@@ -640,7 +640,7 @@ pub(crate) fn tool_get_doc_context(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_list_files(args: &Value) -> Result<String> {
+pub fn tool_list_files(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -663,7 +663,7 @@ pub(crate) fn tool_list_files(args: &Value) -> Result<String> {
     Ok(files.join("\n"))
 }
 
-pub(crate) fn tool_generate_test_context(args: &Value) -> Result<String> {
+pub fn tool_generate_test_context(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let conn = store.connection()?;
@@ -750,7 +750,7 @@ pub(crate) fn tool_generate_test_context(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_generate_sequence_diagram(args: &Value) -> Result<String> {
+pub fn tool_generate_sequence_diagram(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let symbol_id = args
         .get("symbol_id")

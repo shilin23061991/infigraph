@@ -47,6 +47,26 @@ const CREATE_SCHEMA: &[&str] = &[
     )",
     "CREATE REL TABLE IF NOT EXISTS FROM_SOURCE(FROM Document TO Source)",
     "CREATE REL TABLE IF NOT EXISTS LINKS_TO(FROM Document TO Document, url STRING, link_type STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Pipeline(
+        id STRING,
+        name STRING,
+        doc_id STRING,
+        source_systems STRING,
+        dest_tables STRING,
+        scheduler_type STRING,
+        scheduler_config STRING,
+        compliance STRING,
+        github_repo STRING,
+        daci STRING,
+        idempotent STRING,
+        business_logic_summary STRING,
+        data_quality STRING,
+        dependencies_upstream STRING,
+        dependencies_downstream STRING,
+        PRIMARY KEY(id)
+    )",
+    "CREATE REL TABLE IF NOT EXISTS DEFINED_IN(FROM Pipeline TO Document)",
+    "CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM Pipeline TO Pipeline, dep_type STRING)",
 ];
 
 pub struct DocStore {
@@ -352,10 +372,378 @@ impl DocStore {
         let conn = self.connection()?;
         let doc_count = count_query(&conn, "MATCH (d:Document) RETURN count(d)");
         let chunk_count = count_query(&conn, "MATCH (c:Chunk) RETURN count(c)");
+        let pipeline_count = count_query(&conn, "MATCH (p:Pipeline) RETURN count(p)");
         Ok(DocStoreStats {
             document_count: doc_count,
             chunk_count,
+            pipeline_count,
         })
+    }
+
+    pub fn upsert_pipeline(&self, pipeline: &PipelineRecord) -> Result<()> {
+        let conn = self.connection()?;
+        let _ = conn.query(&format!(
+            "MATCH (p:Pipeline) WHERE p.id = '{}' DETACH DELETE p",
+            escape_str(&pipeline.id)
+        ));
+        conn.query(&format!(
+            "CREATE (p:Pipeline {{id: '{}', name: '{}', doc_id: '{}', source_systems: '{}', dest_tables: '{}', scheduler_type: '{}', scheduler_config: '{}', compliance: '{}', github_repo: '{}', daci: '{}', idempotent: '{}', business_logic_summary: '{}', data_quality: '{}', dependencies_upstream: '{}', dependencies_downstream: '{}'}})",
+            escape_str(&pipeline.id),
+            escape_str(&pipeline.name),
+            escape_str(&pipeline.doc_id),
+            escape_str(&pipeline.source_systems),
+            escape_str(&pipeline.dest_tables),
+            escape_str(&pipeline.scheduler_type),
+            escape_str(&pipeline.scheduler_config),
+            escape_str(&pipeline.compliance),
+            escape_str(&pipeline.github_repo),
+            escape_str(&pipeline.daci),
+            escape_str(&pipeline.idempotent),
+            escape_str(&pipeline.business_logic_summary),
+            escape_str(&pipeline.data_quality),
+            escape_str(&pipeline.dependencies_upstream),
+            escape_str(&pipeline.dependencies_downstream),
+        ))
+        .map_err(|e| anyhow::anyhow!("create Pipeline: {e}"))?;
+        Ok(())
+    }
+
+    pub fn link_pipeline_to_doc(&self, pipeline_id: &str, doc_id: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.query(&format!(
+            "MATCH (p:Pipeline), (d:Document) WHERE p.id = '{}' AND d.id = '{}' CREATE (p)-[:DEFINED_IN]->(d)",
+            escape_str(pipeline_id),
+            escape_str(doc_id),
+        ))
+        .map_err(|e| anyhow::anyhow!("link DEFINED_IN: {e}"))?;
+        Ok(())
+    }
+
+    pub fn create_depends_on(&self, from_id: &str, to_id: &str, dep_type: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.query(&format!(
+            "MATCH (a:Pipeline), (b:Pipeline) WHERE a.id = '{}' AND b.id = '{}' CREATE (a)-[:DEPENDS_ON {{dep_type: '{}'}}]->(b)",
+            escape_str(from_id),
+            escape_str(to_id),
+            escape_str(dep_type),
+        ))
+        .map_err(|e| anyhow::anyhow!("create DEPENDS_ON: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_pipeline(&self, pipeline_id: &str) -> Result<Option<PipelineRecord>> {
+        let conn = self.connection()?;
+        let mut result = conn
+            .query(&format!(
+                "MATCH (p:Pipeline) WHERE p.id = '{}' RETURN p.id, p.name, p.doc_id, p.source_systems, p.dest_tables, p.scheduler_type, p.scheduler_config, p.compliance, p.github_repo, p.daci, p.idempotent, p.business_logic_summary, p.data_quality, p.dependencies_upstream, p.dependencies_downstream",
+                escape_str(pipeline_id)
+            ))
+            .map_err(|e| anyhow::anyhow!("query pipeline: {e}"))?;
+        if let Some(row) = result.next() {
+            if row.len() >= 15 {
+                return Ok(Some(PipelineRecord {
+                    id: row[0].to_string(),
+                    name: row[1].to_string(),
+                    doc_id: row[2].to_string(),
+                    source_systems: row[3].to_string(),
+                    dest_tables: row[4].to_string(),
+                    scheduler_type: row[5].to_string(),
+                    scheduler_config: row[6].to_string(),
+                    compliance: row[7].to_string(),
+                    github_repo: row[8].to_string(),
+                    daci: row[9].to_string(),
+                    idempotent: row[10].to_string(),
+                    business_logic_summary: row[11].to_string(),
+                    data_quality: row[12].to_string(),
+                    dependencies_upstream: row[13].to_string(),
+                    dependencies_downstream: row[14].to_string(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn get_all_pipelines(&self) -> Result<Vec<PipelineRecord>> {
+        let conn = self.connection()?;
+        let mut result = conn
+            .query("MATCH (p:Pipeline) RETURN p.id, p.name, p.doc_id, p.source_systems, p.dest_tables, p.scheduler_type, p.scheduler_config, p.compliance, p.github_repo, p.daci, p.idempotent, p.business_logic_summary, p.data_quality, p.dependencies_upstream, p.dependencies_downstream")
+            .map_err(|e| anyhow::anyhow!("query all pipelines: {e}"))?;
+        let mut pipelines = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 15 {
+                pipelines.push(PipelineRecord {
+                    id: row[0].to_string(),
+                    name: row[1].to_string(),
+                    doc_id: row[2].to_string(),
+                    source_systems: row[3].to_string(),
+                    dest_tables: row[4].to_string(),
+                    scheduler_type: row[5].to_string(),
+                    scheduler_config: row[6].to_string(),
+                    compliance: row[7].to_string(),
+                    github_repo: row[8].to_string(),
+                    daci: row[9].to_string(),
+                    idempotent: row[10].to_string(),
+                    business_logic_summary: row[11].to_string(),
+                    data_quality: row[12].to_string(),
+                    dependencies_upstream: row[13].to_string(),
+                    dependencies_downstream: row[14].to_string(),
+                });
+            }
+        }
+        Ok(pipelines)
+    }
+
+    pub fn link_pipeline_dependencies(&self) -> Result<usize> {
+        let pipelines = self.get_all_pipelines()?;
+        if pipelines.len() < 2 {
+            return Ok(0);
+        }
+
+        let conn = self.connection()?;
+        let _ = conn.query("MATCH ()-[r:DEPENDS_ON]->() DELETE r");
+
+        let mut count = 0;
+        for producer in &pipelines {
+            let dest_tables: Vec<&str> = producer.dest_tables
+                .split(',')
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty() && t.contains('.'))
+                .collect();
+            if dest_tables.is_empty() {
+                continue;
+            }
+
+            for consumer in &pipelines {
+                if consumer.id == producer.id {
+                    continue;
+                }
+                let source_text = consumer.source_systems.to_lowercase();
+                let upstream_text = consumer.dependencies_upstream.to_lowercase();
+
+                for table in &dest_tables {
+                    let table_lower = table.to_lowercase();
+                    if source_text.contains(&table_lower) || upstream_text.contains(&table_lower) {
+                        conn.query(&format!(
+                            "MATCH (a:Pipeline), (b:Pipeline) WHERE a.id = '{}' AND b.id = '{}' CREATE (b)-[:DEPENDS_ON {{dep_type: 'data'}}]->(a)",
+                            escape_str(&producer.id),
+                            escape_str(&consumer.id),
+                        ))
+                        .map_err(|e| anyhow::anyhow!("create DEPENDS_ON: {e}"))?;
+                        count += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn query_pipelines_by_compliance(&self, scope: &str) -> Result<Vec<PipelineRecord>> {
+        let conn = self.connection()?;
+        let scope_lower = scope.to_lowercase();
+        let mut result = conn
+            .query(&format!(
+                "MATCH (p:Pipeline) WHERE lower(p.compliance) CONTAINS '{}' RETURN p.id, p.name, p.doc_id, p.source_systems, p.dest_tables, p.scheduler_type, p.scheduler_config, p.compliance, p.github_repo, p.daci, p.idempotent, p.business_logic_summary, p.data_quality, p.dependencies_upstream, p.dependencies_downstream",
+                escape_str(&scope_lower)
+            ))
+            .map_err(|e| anyhow::anyhow!("compliance query: {e}"))?;
+
+        let mut pipelines = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 15 {
+                pipelines.push(PipelineRecord {
+                    id: row[0].to_string(),
+                    name: row[1].to_string(),
+                    doc_id: row[2].to_string(),
+                    source_systems: row[3].to_string(),
+                    dest_tables: row[4].to_string(),
+                    scheduler_type: row[5].to_string(),
+                    scheduler_config: row[6].to_string(),
+                    compliance: row[7].to_string(),
+                    github_repo: row[8].to_string(),
+                    daci: row[9].to_string(),
+                    idempotent: row[10].to_string(),
+                    business_logic_summary: row[11].to_string(),
+                    data_quality: row[12].to_string(),
+                    dependencies_upstream: row[13].to_string(),
+                    dependencies_downstream: row[14].to_string(),
+                });
+            }
+        }
+        Ok(pipelines)
+    }
+
+    pub fn impact_analysis(&self, table_name: &str, max_depth: u32) -> Result<Vec<ImpactResult>> {
+        let table_lower = table_name.to_lowercase();
+        let pipelines = self.get_all_pipelines()?;
+
+        let mut affected: Vec<ImpactResult> = Vec::new();
+        let mut affected_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for p in &pipelines {
+            let sources_lower = p.source_systems.to_lowercase();
+            let upstream_lower = p.dependencies_upstream.to_lowercase();
+            if sources_lower.contains(&table_lower) || upstream_lower.contains(&table_lower) {
+                affected_ids.insert(p.id.clone());
+                affected.push(ImpactResult {
+                    pipeline_id: p.id.clone(),
+                    pipeline_name: p.name.clone(),
+                    impact_type: "direct".to_string(),
+                    depth: 1,
+                    path: format!("{} → {}", table_name, p.name),
+                });
+            }
+        }
+
+        if max_depth > 1 && !affected_ids.is_empty() {
+            let conn = self.connection()?;
+            for depth in 2..=max_depth {
+                let current_ids: Vec<String> = affected_ids.iter().cloned().collect();
+                let mut new_ids = Vec::new();
+
+                for src_id in &current_ids {
+                    let mut result = conn
+                        .query(&format!(
+                            "MATCH (a:Pipeline)-[:DEPENDS_ON]->(b:Pipeline) WHERE b.id = '{}' RETURN a.id, a.name",
+                            escape_str(src_id)
+                        ))
+                        .map_err(|e| anyhow::anyhow!("transitive impact query: {e}"))?;
+
+                    while let Some(row) = result.next() {
+                        if row.len() >= 2 {
+                            let dep_id = row[0].to_string();
+                            if !affected_ids.contains(&dep_id) {
+                                let dep_name = row[1].to_string();
+                                let src_name = pipelines.iter()
+                                    .find(|p| p.id == *src_id)
+                                    .map(|p| p.name.as_str())
+                                    .unwrap_or(src_id);
+                                affected.push(ImpactResult {
+                                    pipeline_id: dep_id.clone(),
+                                    pipeline_name: dep_name,
+                                    impact_type: "transitive".to_string(),
+                                    depth,
+                                    path: format!("{} → ... → {}", table_name, src_name),
+                                });
+                                new_ids.push(dep_id);
+                            }
+                        }
+                    }
+                }
+
+                if new_ids.is_empty() {
+                    break;
+                }
+                affected_ids.extend(new_ids);
+            }
+        }
+
+        Ok(affected)
+    }
+
+    pub fn get_pipeline_deps(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.connection()?;
+        let mut result = conn
+            .query("MATCH (a:Pipeline)-[r:DEPENDS_ON]->(b:Pipeline) RETURN a.name, b.name, r.dep_type")
+            .map_err(|e| anyhow::anyhow!("query pipeline deps: {e}"))?;
+        let mut deps = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 3 {
+                deps.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
+            }
+        }
+        Ok(deps)
+    }
+
+    pub fn link_pipelines_to_repo_files(&self) -> Result<usize> {
+        let pipelines = self.get_all_pipelines()?;
+        if pipelines.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.connection()?;
+
+        let mut doc_result = conn
+            .query("MATCH (d:Document) WHERE NOT starts_with(d.file, 'confluence://') RETURN d.id, d.file")
+            .map_err(|e| anyhow::anyhow!("query repo docs: {e}"))?;
+        let mut repo_docs: Vec<(String, String)> = Vec::new();
+        while let Some(row) = doc_result.next() {
+            if row.len() >= 2 {
+                repo_docs.push((row[0].to_string(), row[1].to_string()));
+            }
+        }
+        if repo_docs.is_empty() {
+            return Ok(0);
+        }
+
+        let mut chunk_result = conn
+            .query("MATCH (c:Chunk) WHERE NOT starts_with(c.doc_file, 'confluence://') RETURN c.doc_file, c.text")
+            .map_err(|e| anyhow::anyhow!("query repo chunks: {e}"))?;
+        let mut file_content: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        while let Some(row) = chunk_result.next() {
+            if row.len() >= 2 {
+                file_content.entry(row[0].to_string())
+                    .or_default()
+                    .push_str(&row[1].to_string());
+            }
+        }
+
+        let mut count = 0;
+        for pipeline in &pipelines {
+            let tables: Vec<&str> = pipeline.source_systems.split(',')
+                .chain(pipeline.dest_tables.split(','))
+                .map(|t| t.trim())
+                .filter(|t| t.contains('.') && t.len() > 3)
+                .collect();
+            if tables.is_empty() {
+                continue;
+            }
+
+            for (doc_id, _doc_file) in &repo_docs {
+                let content = match file_content.get(doc_id) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let content_lower = content.to_lowercase();
+
+                let matches = tables.iter().any(|table| {
+                    content_lower.contains(&table.to_lowercase())
+                });
+
+                if matches {
+                    let _ = conn.query(&format!(
+                        "MATCH (p:Pipeline), (d:Document) WHERE p.id = '{}' AND d.id = '{}' CREATE (p)-[:DEFINED_IN]->(d)",
+                        escape_str(&pipeline.id),
+                        escape_str(doc_id),
+                    ));
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn get_pipeline_search_docs(&self) -> Result<Vec<(String, String)>> {
+        let pipelines = self.get_all_pipelines()?;
+        let mut docs = Vec::new();
+        for p in &pipelines {
+            let text = format!(
+                "Pipeline: {name}\nSource Systems: {sources}\nDestination Tables: {dest}\nScheduler: {sched_type} {sched_config}\nCompliance: {compliance}\nOwner (DACI): {daci}\nGitHub Repo: {repo}\nBusiness Logic: {logic}\nUpstream Dependencies: {up}\nDownstream Dependencies: {down}",
+                name = p.name,
+                sources = p.source_systems,
+                dest = p.dest_tables,
+                sched_type = p.scheduler_type,
+                sched_config = p.scheduler_config,
+                compliance = p.compliance,
+                daci = p.daci,
+                repo = p.github_repo,
+                logic = p.business_logic_summary,
+                up = p.dependencies_upstream,
+                down = p.dependencies_downstream,
+            );
+            docs.push((format!("pipeline::{}", p.id), text));
+        }
+        Ok(docs)
     }
 
     pub fn get_all_chunks(&self) -> Result<Vec<(String, String)>> {
@@ -433,6 +821,7 @@ impl DocStore {
 pub struct DocStoreStats {
     pub document_count: usize,
     pub chunk_count: usize,
+    pub pipeline_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +834,34 @@ pub struct ChunkDetail {
     pub start_offset: usize,
     pub end_offset: usize,
     pub page: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PipelineRecord {
+    pub id: String,
+    pub name: String,
+    pub doc_id: String,
+    pub source_systems: String,
+    pub dest_tables: String,
+    pub scheduler_type: String,
+    pub scheduler_config: String,
+    pub compliance: String,
+    pub github_repo: String,
+    pub daci: String,
+    pub idempotent: String,
+    pub business_logic_summary: String,
+    pub data_quality: String,
+    pub dependencies_upstream: String,
+    pub dependencies_downstream: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImpactResult {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub impact_type: String,
+    pub depth: u32,
+    pub path: String,
 }
 
 fn count_query(conn: &Connection<'_>, query: &str) -> usize {

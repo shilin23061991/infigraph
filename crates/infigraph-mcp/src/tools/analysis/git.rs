@@ -5,7 +5,7 @@ use infigraph_languages::bundled_registry;
 
 use super::super::helpers::open_prism;
 
-pub(crate) fn tool_detect_changes(args: &Value) -> Result<String> {
+pub fn tool_detect_changes(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let base = args.get("base").and_then(|b| b.as_str()).unwrap_or("HEAD");
     let depth = args.get("depth").and_then(|d| d.as_u64()).unwrap_or(3) as u32;
@@ -18,7 +18,7 @@ pub(crate) fn tool_detect_changes(args: &Value) -> Result<String> {
 }
 
 /// Parse git diff output and map changed lines to symbols in the graph.
-pub(crate) fn build_detect_changes_report(
+pub fn build_detect_changes_report(
     project_root: &std::path::Path,
     gq: &infigraph_core::graph::GraphQuery,
     base: &str,
@@ -123,7 +123,7 @@ pub(crate) fn build_detect_changes_report(
 }
 
 /// Parse unified diff output (with --unified=0) to extract (file, start_line, end_line) hunks.
-pub(crate) fn parse_diff_hunks(diff: &str) -> Vec<(String, u32, u32)> {
+pub fn parse_diff_hunks(diff: &str) -> Vec<(String, u32, u32)> {
     let mut hunks = Vec::new();
     let mut current_file = String::new();
 
@@ -154,7 +154,7 @@ pub(crate) fn parse_diff_hunks(diff: &str) -> Vec<(String, u32, u32)> {
     hunks
 }
 
-pub(crate) fn tool_semantic_diff(args: &Value) -> Result<String> {
+pub fn tool_semantic_diff(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -176,7 +176,7 @@ pub(crate) fn tool_semantic_diff(args: &Value) -> Result<String> {
     Ok(infigraph_core::diff::format_diff(&diff))
 }
 
-pub(crate) fn tool_git_summary(args: &Value) -> Result<String> {
+pub fn tool_git_summary(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let n_commits = args.get("n_commits").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
     let author_filter = args.get("author").and_then(|v| v.as_str());

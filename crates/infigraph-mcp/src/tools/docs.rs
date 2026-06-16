@@ -11,7 +11,7 @@ use super::helpers::{find_infigraph_cli, open_prism};
 // Document indexing helpers and statics
 // ---------------------------------------------------------------------------
 
-pub(crate) fn open_doc_index(args: &Value) -> Result<infigraph_docs::DocIndex> {
+pub fn open_doc_index(args: &Value) -> Result<infigraph_docs::DocIndex> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -28,14 +28,14 @@ pub(crate) struct DocWatcherEntry {
 
 pub(crate) static DOC_WATCHERS: Mutex<Option<HashMap<String, DocWatcherEntry>>> = Mutex::new(None);
 
-pub(crate) fn init_doc_watchers() {
+pub fn init_doc_watchers() {
     let mut guard = DOC_WATCHERS.lock().unwrap();
     if guard.is_none() {
         *guard = Some(HashMap::new());
     }
 }
 
-pub(crate) fn tool_review(args: &Value) -> Result<String> {
+pub fn tool_review(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let base_ref = args
         .get("base_ref")
@@ -93,7 +93,7 @@ pub(crate) fn tool_review(args: &Value) -> Result<String> {
     }
 }
 
-pub(crate) fn tool_index_docs(args: &Value) -> Result<String> {
+pub fn tool_index_docs(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -138,7 +138,7 @@ pub(crate) fn tool_index_docs(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_search_docs(args: &Value) -> Result<String> {
+pub fn tool_search_docs(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -207,7 +207,7 @@ pub(crate) fn tool_search_docs(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_clean_docs(args: &Value) -> Result<String> {
+pub fn tool_clean_docs(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -241,7 +241,7 @@ pub(crate) fn tool_clean_docs(args: &Value) -> Result<String> {
     )
 }
 
-pub(crate) fn tool_reindex_docs(args: &Value) -> Result<String> {
+pub fn tool_reindex_docs(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -275,7 +275,7 @@ pub(crate) fn tool_reindex_docs(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_index_confluence(args: &Value) -> Result<String> {
+pub fn tool_index_confluence(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -364,7 +364,7 @@ pub(crate) fn tool_index_confluence(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_index_confluence_pages(args: &Value) -> Result<String> {
+pub fn tool_index_confluence_pages(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -470,7 +470,7 @@ pub(crate) fn tool_index_confluence_pages(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_watch_docs(args: &Value) -> Result<String> {
+pub fn tool_watch_docs(args: &Value) -> Result<String> {
     init_doc_watchers();
 
     let path = args
@@ -525,7 +525,7 @@ pub(crate) fn tool_watch_docs(args: &Value) -> Result<String> {
     ))
 }
 
-pub(crate) fn tool_stop_watch_docs(args: &Value) -> Result<String> {
+pub fn tool_stop_watch_docs(args: &Value) -> Result<String> {
     let watcher_id = args
         .get("watcher_id")
         .and_then(|v| v.as_str())
@@ -543,7 +543,7 @@ pub(crate) fn tool_stop_watch_docs(args: &Value) -> Result<String> {
     Ok(format!("No active document watcher with ID {watcher_id}"))
 }
 
-pub(crate) fn tool_index_manifests(args: &Value) -> Result<String> {
+pub fn tool_index_manifests(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let results = infigraph_core::manifest::index_manifests(prism.root(), store)?;

@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use infigraph_core::model::BridgeKind;
 
-pub(crate) fn tool_detect_security_issues(args: &Value) -> Result<String> {
+pub fn tool_detect_security_issues(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -36,7 +36,7 @@ pub(crate) fn tool_detect_security_issues(args: &Value) -> Result<String> {
     Ok(infigraph_core::security::format_scan_results(&scan))
 }
 
-pub(crate) fn tool_detect_bridges(args: &Value) -> Result<String> {
+pub fn tool_detect_bridges(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())

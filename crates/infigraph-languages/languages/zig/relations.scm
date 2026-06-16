@@ -7,4 +7,5 @@
 ; Method calls: obj.method()
 (call_expression
   function: (field_expression
+    object: (_) @call.receiver
     member: (identifier) @call.func)) @call.site

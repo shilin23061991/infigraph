@@ -8,7 +8,7 @@ use infigraph_core::embed;
 use super::docs::{open_doc_index, tool_search_docs};
 use super::helpers::{find_containing_symbol, open_prism};
 
-pub(crate) fn tool_search(args: &Value) -> Result<String> {
+pub fn tool_search(args: &Value) -> Result<String> {
     let scope = args.get("scope").and_then(|s| s.as_str()).unwrap_or("all");
 
     if scope == "docs" {
@@ -321,7 +321,7 @@ pub(crate) fn tool_search(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_search_symbols(args: &Value) -> Result<String> {
+pub fn tool_search_symbols(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let query = args
         .get("query")
@@ -405,7 +405,7 @@ pub(crate) fn tool_search_symbols(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_search_code(args: &Value) -> Result<String> {
+pub fn tool_search_code(args: &Value) -> Result<String> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -432,7 +432,7 @@ pub(crate) fn tool_search_code(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_semantic_search(args: &Value) -> Result<String> {
+pub fn tool_semantic_search(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let query = args
         .get("query")

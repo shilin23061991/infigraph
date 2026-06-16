@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use infigraph_core::embed;
 use infigraph_core::graph::{SessionData, SessionStore};
 
-pub(crate) fn open_session_store(args: &Value) -> Result<SessionStore> {
+pub fn open_session_store(args: &Value) -> Result<SessionStore> {
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -14,14 +14,14 @@ pub(crate) fn open_session_store(args: &Value) -> Result<SessionStore> {
     SessionStore::open(&PathBuf::from(path))
 }
 
-pub(crate) fn session_epoch() -> i64 {
+pub fn session_epoch() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
 }
 
-pub(crate) fn session_date_id() -> String {
+pub fn session_date_id() -> String {
     let secs = session_epoch();
     let days = secs / 86400;
     let mut y = 1970i64;
@@ -64,7 +64,7 @@ pub(crate) fn session_date_id() -> String {
     format!("session_{y:04}-{:02}-{:02}", mo + 1, remaining + 1)
 }
 
-pub(crate) fn tool_save_session(args: &Value) -> Result<String> {
+pub fn tool_save_session(args: &Value) -> Result<String> {
     let store = open_session_store(args)?;
     let path = args
         .get("path")
@@ -183,9 +183,9 @@ pub(crate) fn tool_save_session(args: &Value) -> Result<String> {
     Ok(format!("Session saved: {session_id}"))
 }
 
-pub(crate) const CLUSTER_GAP_SECS: i64 = 72 * 3600;
+pub const CLUSTER_GAP_SECS: i64 = 72 * 3600;
 
-pub(crate) fn detect_session_cluster(store: &SessionStore) -> Result<Vec<SessionData>> {
+pub fn detect_session_cluster(store: &SessionStore) -> Result<Vec<SessionData>> {
     let sorted = store.list_by_updated()?;
     if sorted.len() <= 1 {
         return Ok(sorted);
@@ -203,11 +203,11 @@ pub(crate) fn detect_session_cluster(store: &SessionStore) -> Result<Vec<Session
     Ok(cluster)
 }
 
-pub(crate) fn date_from_session_id(id: &str) -> &str {
+pub fn date_from_session_id(id: &str) -> &str {
     id.strip_prefix("session_").unwrap_or(id)
 }
 
-pub(crate) fn format_session_output(
+pub fn format_session_output(
     session: &SessionData,
     idx: usize,
     total: usize,
@@ -265,7 +265,7 @@ pub(crate) fn format_session_output(
     out
 }
 
-pub(crate) fn append_activity_log(out: &mut String, path: &str) {
+pub fn append_activity_log(out: &mut String, path: &str) {
     let today_date = session_date_id().replace("session_", "");
     let activity_path = PathBuf::from(path)
         .join(".infigraph")
@@ -307,7 +307,7 @@ pub(crate) fn append_activity_log(out: &mut String, path: &str) {
     }
 }
 
-pub(crate) fn append_old_session_hint(sessions_dir: &std::path::Path, out: &mut String) {
+pub fn append_old_session_hint(sessions_dir: &std::path::Path, out: &mut String) {
     if let Ok(entries) = std::fs::read_dir(sessions_dir) {
         let session_files: Vec<_> = entries
             .filter_map(|e| e.ok())
@@ -326,7 +326,7 @@ pub(crate) fn append_old_session_hint(sessions_dir: &std::path::Path, out: &mut 
     }
 }
 
-pub(crate) fn tool_get_latest_session(args: &Value) -> Result<String> {
+pub fn tool_get_latest_session(args: &Value) -> Result<String> {
     let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
     let explicit_limit = args.get("limit").and_then(|v| v.as_u64());
     let store = open_session_store(args)?;
@@ -367,7 +367,7 @@ pub(crate) fn tool_get_latest_session(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_purge_sessions(args: &Value) -> Result<String> {
+pub fn tool_purge_sessions(args: &Value) -> Result<String> {
     let store = open_session_store(args)?;
     let path = args
         .get("path")
@@ -426,7 +426,7 @@ pub(crate) fn tool_purge_sessions(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_search_sessions(args: &Value) -> Result<String> {
+pub fn tool_search_sessions(args: &Value) -> Result<String> {
     let store = open_session_store(args)?;
     let path = args
         .get("path")
@@ -501,4 +501,134 @@ pub(crate) fn tool_search_sessions(args: &Value) -> Result<String> {
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use infigraph_core::graph::{SessionStore, SessionData};
+
+    fn make_session(id: &str, created_at: i64, updated_at: i64) -> SessionData {
+        SessionData {
+            id: id.to_string(),
+            summary: format!("work on {id}"),
+            pending_tasks: String::new(),
+            decisions: String::new(),
+            files_touched: String::new(),
+            constraints: String::new(),
+            assumptions: String::new(),
+            blockers: String::new(),
+            created_at,
+            updated_at,
+        }
+    }
+
+    fn store_with_sessions(sessions: &[SessionData]) -> (tempfile::TempDir, SessionStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_dir(dir.path()).unwrap();
+        for s in sessions {
+            store.save(s).unwrap();
+        }
+        (dir, store)
+    }
+
+    #[test]
+    fn test_cluster_single_session() {
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-08", 1000, 1000),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 1);
+        assert_eq!(cluster[0].id, "session_2026-06-08");
+    }
+
+    #[test]
+    fn test_cluster_two_sessions_within_24h() {
+        let now = 1_750_000_000i64;
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-07", now - 86400, now - 3600),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 2, "both sessions within 24h should cluster");
+    }
+
+    #[test]
+    fn test_cluster_two_sessions_within_72h() {
+        let now = 1_750_000_000i64;
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-05", now - 200_000, now - 200_000),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 2, "sessions 55h apart should cluster (< 72h)");
+    }
+
+    #[test]
+    fn test_cluster_gap_exceeds_72h() {
+        let now = 1_750_000_000i64;
+        let old = now - (73 * 3600);
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-01", old - 86400, old),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 1, "73h gap should break cluster");
+        assert_eq!(cluster[0].id, "session_2026-06-08");
+    }
+
+    #[test]
+    fn test_cluster_chained_48h_gaps() {
+        let now = 1_750_000_000i64;
+        let h48 = 48 * 3600;
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-04", now - 2 * h48, now - 2 * h48),
+            make_session("session_2026-06-06", now - h48, now - h48),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 3, "chained 48h gaps should all cluster (each < 72h from neighbor)");
+    }
+
+    #[test]
+    fn test_cluster_chain_breaks_at_old_session() {
+        let now = 1_750_000_000i64;
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-05-01", now - 30 * 86400, now - 30 * 86400),
+            make_session("session_2026-06-07", now - 86400, now - 86400),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 2, "old session 30d ago should not be in cluster");
+        assert_eq!(cluster[0].id, "session_2026-06-08");
+        assert_eq!(cluster[1].id, "session_2026-06-07");
+    }
+
+    #[test]
+    fn test_cluster_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_dir(dir.path()).unwrap();
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert!(cluster.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_many_parallel_same_week() {
+        let now = 1_750_000_000i64;
+        let (_dir, store) = store_with_sessions(&[
+            make_session("session_2026-06-04", now - 4 * 86400, now - 4 * 86400),
+            make_session("session_2026-06-05", now - 3 * 86400, now - 3 * 86400),
+            make_session("session_2026-06-06", now - 2 * 86400, now - 2 * 86400),
+            make_session("session_2026-06-07", now - 86400, now - 86400),
+            make_session("session_2026-06-08", now, now),
+        ]);
+        let cluster = detect_session_cluster(&store).unwrap();
+        assert_eq!(cluster.len(), 5, "daily sessions should all cluster");
+    }
+
+    #[test]
+    fn test_date_from_session_id() {
+        assert_eq!(date_from_session_id("session_2026-06-08"), "2026-06-08");
+        assert_eq!(date_from_session_id("weird_id"), "weird_id");
+    }
 }

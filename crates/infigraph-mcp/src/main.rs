@@ -3,8 +3,8 @@ use std::io::{self, BufRead, Write};
 use anyhow::Result;
 use serde_json::{json, Value};
 
-mod tools;
-mod web;
+use infigraph_mcp::tools;
+use infigraph_mcp::web;
 
 fn main() -> Result<()> {
     let _ = rayon::ThreadPoolBuilder::new()

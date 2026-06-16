@@ -6,7 +6,7 @@ use infigraph_core::embed;
 use super::helpers::{find_infigraph_cli, open_prism};
 use super::watch::auto_start_watch;
 
-pub(crate) fn tool_index_project(args: &Value) -> Result<String> {
+pub fn tool_index_project(args: &Value) -> Result<String> {
     let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
     let full = args.get("full").and_then(|f| f.as_bool()).unwrap_or(false);
 
@@ -75,7 +75,7 @@ pub(crate) fn tool_index_project(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_get_dependencies(args: &Value) -> Result<String> {
+pub fn tool_get_dependencies(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let store = prism.store().context("not initialized")?;
     let eco_filter = args.get("ecosystem").and_then(|v| v.as_str());
@@ -102,7 +102,7 @@ pub(crate) fn tool_get_dependencies(args: &Value) -> Result<String> {
     Ok(out)
 }
 
-pub(crate) fn tool_scip_import(args: &Value) -> Result<String> {
+pub fn tool_scip_import(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let root = prism.root().to_path_buf();
     let store = prism.store().context("not initialized")?;

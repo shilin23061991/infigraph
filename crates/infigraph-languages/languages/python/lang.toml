@@ -2,3 +2,7 @@
 name = "python"
 extensions = [".py"]
 grammar = "tree-sitter-python"
+
+[[custom_edges]]
+name = "DECORATED_BY"
+capture = "decorates"
