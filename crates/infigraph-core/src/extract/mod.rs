@@ -10,6 +10,10 @@ use crate::analysis::extract_statements;
 use crate::lang::{LanguagePack, ParserBackend};
 use crate::model::{FileExtraction, Relation, RelationKind, Span, Statement, SymbolKind};
 
+thread_local! {
+    static TS_PARSER: std::cell::RefCell<tree_sitter::Parser> = std::cell::RefCell::new(tree_sitter::Parser::new());
+}
+
 /// Parse a source file and extract all symbols and relationships.
 pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<FileExtraction> {
     let (symbols, mut relations, statements) = match &pack.backend {
@@ -17,8 +21,8 @@ pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<Fi
             grammar,
             entity_query,
             relation_query,
-        } => {
-            let mut parser = tree_sitter::Parser::new();
+        } => TS_PARSER.with(|cell| -> Result<_> {
+            let mut parser = cell.borrow_mut();
             parser.set_language(grammar)?;
 
             let tree = parser
@@ -40,8 +44,8 @@ pub fn extract_file(path: &str, source: &[u8], pack: &LanguagePack) -> Result<Fi
                 )
             };
             let stmts = extract_statements_for_symbols(root, source, &symbols);
-            (symbols, relations, stmts)
-        }
+            Ok((symbols, relations, stmts))
+        })?,
         ParserBackend::Custom(extractor) => {
             let (s, r) = extractor.extract(path, source, &pack.name)?;
             (s, r, Vec::new())

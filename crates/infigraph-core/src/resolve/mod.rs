@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use rayon::prelude::*;
 
 use crate::graph::store::GraphStore;
 use crate::learned::LearnedStore;
@@ -102,144 +103,188 @@ fn resolve_with_map(
         }
     }
 
-    for ext in extractions {
-        let local_symbols: HashMap<&str, &str> = ext
-            .symbols
-            .iter()
-            .map(|s| (s.name.as_str(), s.id.as_str()))
-            .collect();
+    // Build a flat HashSet of all known symbol IDs for learned-store lookups
+    let all_symbol_ids: std::collections::HashSet<&str> = if learned_store.is_some() {
+        symbol_map
+            .values()
+            .flat_map(|v| v.iter().map(|(id, _, _)| id.as_str()))
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
 
-        let imported_stems: std::collections::HashSet<String> = ext
-            .relations
-            .iter()
-            .filter(|r| r.kind == RelationKind::Imports)
-            .map(|r| {
-                let raw = r
-                    .target_id
-                    .rsplit(['/', '\\', '.'])
-                    .next()
-                    .unwrap_or(&r.target_id);
-                raw.to_lowercase()
-            })
-            .collect();
+    // Parallel resolution: each file resolved independently, results merged
+    struct FileResolveResult {
+        resolved: usize,
+        unresolved: usize,
+        dangling: usize,
+        learned: usize,
+        pairs: Vec<(String, String)>,
+    }
 
-        let source_is_sql = ext.file.ends_with(".sql");
+    let file_results: Vec<FileResolveResult> = extractions
+        .par_iter()
+        .map(|ext| {
+            let mut res = FileResolveResult {
+                resolved: 0,
+                unresolved: 0,
+                dangling: 0,
+                learned: 0,
+                pairs: Vec::new(),
+            };
 
-        for rel in &ext.relations {
-            if rel.kind != RelationKind::Calls {
-                continue;
-            }
+            let local_symbols: HashMap<&str, &str> = ext
+                .symbols
+                .iter()
+                .map(|s| (s.name.as_str(), s.id.as_str()))
+                .collect();
 
-            let target_name = rel.target_id.rsplit("::").next().unwrap_or(&rel.target_id);
+            let imported_stems: std::collections::HashSet<String> = ext
+                .relations
+                .iter()
+                .filter(|r| r.kind == RelationKind::Imports)
+                .map(|r| {
+                    let raw = r
+                        .target_id
+                        .rsplit(['/', '\\', '.'])
+                        .next()
+                        .unwrap_or(&r.target_id);
+                    raw.to_lowercase()
+                })
+                .collect();
 
-            if local_symbols.contains_key(target_name) {
-                continue;
-            }
+            let source_is_sql = ext.file.ends_with(".sql");
 
-            total_dangling += 1;
+            for rel in &ext.relations {
+                if rel.kind != RelationKind::Calls {
+                    continue;
+                }
 
-            // Layer 3: Learned pattern lookup (from prior SCIP corrections).
-            if let Some(ls) = learned_store {
-                if let Some(pattern) = ls.lookup(&ext.file, target_name) {
-                    let target_exists = symbol_map.values().any(|candidates| {
-                        candidates
-                            .iter()
-                            .any(|(id, _, _)| *id == pattern.resolved_to_symbol)
-                    });
-                    if target_exists {
-                        resolved_pairs
-                            .push((rel.source_id.clone(), pattern.resolved_to_symbol.clone()));
-                        resolved += 1;
-                        learned_resolved += 1;
-                        continue;
+                let target_name = rel.target_id.rsplit("::").next().unwrap_or(&rel.target_id);
+
+                if local_symbols.contains_key(target_name) {
+                    continue;
+                }
+
+                res.dangling += 1;
+
+                // Layer 3: Learned pattern lookup (from prior SCIP corrections).
+                if let Some(ls) = learned_store {
+                    if let Some(pattern) = ls.lookup(&ext.file, target_name) {
+                        if all_symbol_ids.contains(pattern.resolved_to_symbol.as_str()) {
+                            res.pairs
+                                .push((rel.source_id.clone(), pattern.resolved_to_symbol.clone()));
+                            res.resolved += 1;
+                            res.learned += 1;
+                            continue;
+                        }
                     }
                 }
-            }
 
-            // Strategy 1: Receiver-aware resolution.
-            if let Some(ref receiver) = rel.receiver {
-                let qualified = format!("{}::{}", receiver, target_name);
-                if let Some(matches) = class_method_map.get(&qualified) {
-                    let best = if matches.len() == 1 {
-                        Some(matches[0].0.clone())
-                    } else {
-                        matches
-                            .iter()
-                            .find(|(_, f)| {
+                // Strategy 1: Receiver-aware resolution.
+                if let Some(ref receiver) = rel.receiver {
+                    let qualified = format!("{}::{}", receiver, target_name);
+                    if let Some(matches) = class_method_map.get(&qualified) {
+                        let best = if matches.len() == 1 {
+                            Some(matches[0].0.clone())
+                        } else {
+                            let by_import = shortest_id2(matches.iter(), |(_, f)| {
                                 let stem = std::path::Path::new(f)
                                     .file_stem()
                                     .and_then(|s| s.to_str())
                                     .map(|s| s.to_lowercase())
                                     .unwrap_or_default();
                                 imported_stems.contains(&stem)
+                            });
+                            by_import.or_else(|| {
+                                matches
+                                    .iter()
+                                    .min_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+                                    .map(|(id, _)| id.clone())
                             })
-                            .or(matches.first())
-                            .map(|(id, _)| id.clone())
-                    };
-                    if let Some(target_id) = best {
-                        resolved_pairs.push((rel.source_id.clone(), target_id));
-                        resolved += 1;
-                        continue;
+                        };
+                        if let Some(target_id) = best {
+                            res.pairs.push((rel.source_id.clone(), target_id));
+                            res.resolved += 1;
+                            continue;
+                        }
                     }
                 }
-            }
 
-            // Strategy 2: Enclosing-class preference.
-            let caller_class = rel.source_id.rsplit("::").nth(1).map(|s| s.to_string());
+                // Strategy 2: Enclosing-class preference.
+                let caller_class = rel.source_id.rsplit("::").nth(1).map(|s| s.to_string());
 
-            if let Some(candidates) = symbol_map.get(target_name) {
-                let cross_file: Vec<_> = candidates
-                    .iter()
-                    .filter(|(_, f, kind)| {
-                        if *f == ext.file {
-                            return false;
-                        }
-                        if source_is_sql && f.ends_with(".sql") && kind == "Function" {
-                            return false;
-                        }
-                        true
-                    })
-                    .collect();
+                if let Some(candidates) = symbol_map.get(target_name) {
+                    let cross_file: Vec<_> = candidates
+                        .iter()
+                        .filter(|(_, f, kind)| {
+                            if *f == ext.file {
+                                return false;
+                            }
+                            if source_is_sql && f.ends_with(".sql") && kind == "Function" {
+                                return false;
+                            }
+                            true
+                        })
+                        .collect();
 
-                let resolved_id = if cross_file.len() == 1 {
-                    Some(cross_file[0].0.clone())
-                } else if cross_file.len() > 1 {
-                    let by_receiver: Option<String> = rel.receiver.as_ref().and_then(|recv| {
-                        cross_file
-                            .iter()
-                            .find(|(id, _, _)| id.contains(&format!("::{}::{}", recv, target_name)))
-                            .map(|(id, _, _)| id.clone())
-                    });
+                    let resolved_id = if cross_file.len() == 1 {
+                        Some(cross_file[0].0.clone())
+                    } else if cross_file.len() > 1 {
+                        let by_receiver: Option<String> =
+                            rel.receiver.as_ref().and_then(|recv| {
+                                let pattern = format!("::{}::{}", recv, target_name);
+                                shortest_id(cross_file.iter().copied(), |(id, _, _)| {
+                                    id.contains(&pattern)
+                                })
+                            });
 
-                    if by_receiver.is_some() {
-                        by_receiver
-                    } else if let Some(ref cls) = caller_class {
-                        let same_class = cross_file
-                            .iter()
-                            .find(|(id, _, _)| id.contains(&format!("::{cls}::")))
-                            .map(|(id, _, _)| id.clone());
-                        if same_class.is_some() {
-                            same_class
+                        if by_receiver.is_some() {
+                            by_receiver
+                        } else if let Some(ref cls) = caller_class {
+                            let cls_pattern = format!("::{cls}::");
+                            let same_class = shortest_id(
+                                cross_file.iter().copied(),
+                                |(id, _, _)| id.contains(&cls_pattern),
+                            );
+                            if same_class.is_some() {
+                                same_class
+                            } else {
+                                import_scope_match(&cross_file, &imported_stems, source_is_sql)
+                            }
                         } else {
                             import_scope_match(&cross_file, &imported_stems, source_is_sql)
                         }
                     } else {
-                        import_scope_match(&cross_file, &imported_stems, source_is_sql)
+                        None
+                    };
+
+                    if let Some(target_id) = resolved_id {
+                        res.pairs.push((rel.source_id.clone(), target_id));
+                        res.resolved += 1;
+                    } else {
+                        res.unresolved += 1;
                     }
                 } else {
-                    None
-                };
-
-                if let Some(target_id) = resolved_id {
-                    resolved_pairs.push((rel.source_id.clone(), target_id));
-                    resolved += 1;
-                } else {
-                    unresolved += 1;
+                    res.unresolved += 1;
                 }
-            } else {
-                unresolved += 1;
             }
-        }
+
+            res
+        })
+        .collect();
+
+    // Merge parallel results
+    for fr in &file_results {
+        resolved += fr.resolved;
+        unresolved += fr.unresolved;
+        total_dangling += fr.dangling;
+        learned_resolved += fr.learned;
+    }
+    let total_pairs: usize = file_results.iter().map(|fr| fr.pairs.len()).sum();
+    resolved_pairs.reserve(total_pairs);
+    for fr in file_results {
+        resolved_pairs.extend(fr.pairs);
     }
 
     // Batch insert resolved CALLS edges via COPY FROM parquet
@@ -465,7 +510,7 @@ fn resolve_inherits(
                 let resolved_id = if cross_file.len() == 1 {
                     Some(cross_file[0].0.clone())
                 } else if cross_file.len() > 1 {
-                    let in_scope = cross_file.iter().find(|(_, f, _)| {
+                    let in_scope = shortest_id(cross_file.iter().copied(), |(_, f, _)| {
                         let stem = std::path::Path::new(f)
                             .file_stem()
                             .and_then(|s| s.to_str())
@@ -473,11 +518,15 @@ fn resolve_inherits(
                             .unwrap_or_default();
                         imported_stems.contains(&stem)
                     });
-                    let by_kind = cross_file.iter().find(|(_, _, k)| k == "Interface");
-                    in_scope
-                        .or(by_kind)
-                        .or(cross_file.first())
-                        .map(|(id, _, _)| id.clone())
+                    let by_kind = in_scope.is_none().then(|| {
+                        shortest_id(cross_file.iter().copied(), |(_, _, k)| k == "Interface")
+                    }).flatten();
+                    in_scope.or(by_kind).or_else(|| {
+                        cross_file
+                            .iter()
+                            .min_by(|(a, _, _), (b, _, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+                            .map(|(id, _, _)| id.clone())
+                    })
                 } else {
                     None
                 };
@@ -607,15 +656,35 @@ fn import_scope_match(
         vec![]
     };
     if !in_scope.is_empty() {
-        Some(in_scope[0].0.clone())
-    } else if source_is_sql {
-        cross_file
+        in_scope
             .iter()
-            .find(|(_, _, k)| *k == "Class")
+            .min_by(|(a, _, _), (b, _, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
             .map(|(id, _, _)| id.clone())
+    } else if source_is_sql {
+        shortest_id(cross_file.iter().copied(), |(_, _, k)| *k == "Class")
     } else {
         None
     }
+}
+
+fn shortest_id<'a, I, F>(iter: I, pred: F) -> Option<String>
+where
+    I: Iterator<Item = &'a (String, String, String)>,
+    F: Fn(&(String, String, String)) -> bool,
+{
+    iter.filter(|t| pred(t))
+        .min_by(|(a, _, _), (b, _, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+        .map(|(id, _, _)| id.clone())
+}
+
+fn shortest_id2<'a, I, F>(iter: I, pred: F) -> Option<String>
+where
+    I: Iterator<Item = &'a (String, String)>,
+    F: Fn(&(String, String)) -> bool,
+{
+    iter.filter(|t| pred(t))
+        .min_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+        .map(|(id, _)| id.clone())
 }
 
 fn escape(s: &str) -> String {
