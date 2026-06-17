@@ -11,6 +11,15 @@ This directory contains the source for the Infigraph documentation site, built w
 
 ### Setup
 
+**One-time setup** (after cloning the repo):
+
+```bash
+# Copy branding assets from branding-system/ to docs/
+./scripts/setup-docs.sh
+```
+
+**Then for development:**
+
 ```bash
 cd docs
 bundle install
@@ -83,8 +92,18 @@ Uses [Just the Docs](https://just-the-docs.github.io/) — professional document
 - Syntax highlighting
 
 To customize:
-- Edit `_config.yml` for site metadata, color scheme, and navigation links
-- Theme styling is built-in; no custom CSS needed
+- Edit `_config.yml` for site metadata, color scheme, navigation links, and logo
+- Custom CSS in `_sass/custom/custom.scss` (automatically included by Just the Docs)
+
+## Branding
+
+Infigraph branding is integrated with:
+- **Logo** — Displayed in navbar header (configured in `_config.yml`)
+- **Hero banner** — Top of landing page
+- **Footer banner** — Bottom of landing page
+- **Custom CSS** — Responsive styling for all branding elements
+
+See [BRANDING.md](BRANDING.md) for detailed branding setup and asset organization.
 
 ## Single Source of Truth Pattern
 

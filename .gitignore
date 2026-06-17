@@ -50,6 +50,13 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Jekyll build artifacts & auto-generated files
+docs/_site/
+docs/.jekyll-cache/
+docs/Gemfile.lock
+docs/assets/branding/
+# (Note: branding assets are copied from branding-system/ during build)
+
 # Auto-generated Jekyll docs (synced from root sources)
 docs/architecture.md
 docs/contributing.md

@@ -6,9 +6,7 @@ nav_order: 1
 
 # Infigraph
 
-<div style="text-align: center; margin-bottom: 2rem;">
-  <img src="/infigraph/assets/branding/hero-banner.png" alt="Infigraph" style="max-width: 600px; width: 100%;" />
-</div>
+<img src="/infigraph/assets/branding/hero-banner.png" alt="Infigraph" />
 
 **AST-powered code intelligence engine.** Indexes codebases into a persistent knowledge graph with full Cypher queries, hybrid semantic search, cross-file call resolution, and **62 programming languages**.
 
@@ -134,10 +132,4 @@ Then ask your AI coding agent:
 
 ---
 
-<div style="text-align: center; margin-top: 2rem; margin-bottom: 2rem;">
-  <img src="/infigraph/assets/branding/footer-banner.png" alt="Infigraph Footer" style="max-width: 600px; width: 100%;" />
-</div>
-
----
-
-Built with ❤️ by [Intuit](https://intuit.com)
+<img src="/infigraph/assets/branding/footer-banner.png" alt="Infigraph Footer" />

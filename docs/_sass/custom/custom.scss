@@ -1,0 +1,63 @@
+// Infigraph Branding Styles for Just the Docs
+
+// Hero banner at top of page
+.page-header {
+  padding-bottom: 2rem;
+}
+
+// Branding images (hero and footer banners)
+img[alt="Infigraph"],
+img[alt="Infigraph Footer"] {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  border-radius: 8px;
+
+  // Responsive sizing
+  @media (max-width: 768px) {
+    max-width: 90%;
+  }
+}
+
+// Hero banner specific styling
+.site-header img[alt="Infigraph"] {
+  margin: 1.5rem auto;
+  width: auto;
+}
+
+// Footer banner styling
+.site-footer {
+  padding-top: 2rem;
+
+  img[alt="Infigraph Footer"] {
+    margin: 1.5rem auto;
+    width: 100%;
+    max-width: 600px;
+  }
+}
+
+// Logo in navbar (rendered by Just the Docs)
+.site-header .site-logo {
+  max-width: 40px;
+  height: auto;
+  margin-right: 1rem;
+}
+
+// Ensure proper spacing for banners in main content
+main {
+  img[alt="Infigraph"],
+  img[alt="Infigraph Footer"] {
+    margin: 2rem auto;
+    display: block;
+  }
+}
+
+// Dark mode adjustments (if color scheme is set to auto)
+@media (prefers-color-scheme: dark) {
+  img[alt="Infigraph"],
+  img[alt="Infigraph Footer"] {
+    // Optional: add filter or border for dark mode visibility
+    // filter: brightness(0.9);
+  }
+}

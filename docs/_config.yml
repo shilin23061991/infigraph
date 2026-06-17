@@ -1,4 +1,4 @@
-title: Infigraph
+title: ""
 description: AST-powered Local-first Code Intelligence Engine
 url: https://intuit.github.io/infigraph
 baseurl: /infigraph
@@ -13,8 +13,11 @@ color_scheme: light
 search_enabled: true
 search_tokenizer_separator: /[\s/]+/
 heading_anchors: true
+back_to_top: true
+back_to_top_text: "Back to top"
 
 # Logo in navbar (from branding-system/logos/)
+# Site title is empty to show logo only without text
 logo: /infigraph/assets/branding/logo.svg
 
 # Navigation (sidebar)

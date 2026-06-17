@@ -961,6 +961,20 @@ const ATTR_KINDS: &[&str] = &[
 - `order-service/` — TypeScript Express (4 files, 5 routes)
 - `payment-service/` — Rust Actix-web (5 files, 4 routes)
 
+## Documentation
+
+The documentation site is built with Jekyll (Just the Docs theme) and deployed to GitHub Pages.
+
+**To develop the docs locally:**
+```bash
+./scripts/setup-docs.sh  # One-time: copy branding assets
+cd docs && bundle install && bundle exec jekyll serve
+```
+
+Visit `http://localhost:4000/infigraph/` to view the site.
+
+See [docs/README.md](docs/README.md) for detailed documentation setup instructions.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, code style, and how to add a language or submit a PR.
