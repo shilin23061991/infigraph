@@ -117,7 +117,7 @@ Examples:
 - **Sequence Diagrams:** Auto-generates Mermaid sequence diagrams from call graphs.
 - **Cross-Language Detection:** Delphi↔COM, VB6↔COM, C#↔JNI, FFI, gRPC, WASM bridges.
 - **Grammar Plugins:** Drop `.g4` + `plugin.toml` — parse any custom/internal DSL without Rust compilation.
-- **Pipeline Plugins:** Runtime-extensible pipeline metadata extraction — add new data pipeline formats (dbt, Airflow, custom) without recompiling. Dependency graphs, impact analysis, compliance queries.
+- **[Pipeline Plugins](docs/PIPELINE_PLUGINS.md):** Runtime-extensible pipeline metadata extraction — add new data pipeline formats (dbt, Airflow, custom) without recompiling. Dependency graphs, impact analysis, compliance queries.
 - **Web UI:** Built-in graph explorer, search, route map at localhost:9749.
 - **Export:** Neo4j Cypher, GraphML, JSON — take your graph anywhere.
 
@@ -452,101 +452,15 @@ Both backends produce the same `Symbol` + `Relation` output. Everything downstre
 
 ## Pipeline Plugins
 
-Infigraph supports runtime-loaded pipeline plugins for extracting data pipeline metadata from documents (e.g. Confluence design docs). Each plugin is a subprocess that communicates via JSON over stdin/stdout — no recompilation needed to add new pipeline formats.
+Runtime-extensible pipeline metadata extraction — add new data pipeline formats (dbt, Airflow, custom) without recompiling. Each plugin is a subprocess with JSON IPC.
 
-### How it works
+**[Full Pipeline Plugins Guide →](docs/PIPELINE_PLUGINS.md)**
 
-1. Plugin is a directory with `plugin.toml` + an extractor binary/script
-2. Infigraph discovers plugins at startup from two locations:
-   - `~/.infigraph/pipelines/*/plugin.toml` — user-level (all projects)
-   - `<project>/pipelines/*/plugin.toml` — project-level (per repo)
-3. When a document is indexed, infigraph tries each plugin's `detect_patterns` against the content
-4. Matching plugin's extractor subprocess receives the document, returns structured pipeline metadata
-5. Metadata is stored in the graph DB: `PipelineCore` shared table + plugin-specific detail table
-
-### Directory structure
-
-```
-pipelines/
-  my-plugin/
-    plugin.toml              # Plugin manifest (schema, command, detection patterns)
-```
-
-### plugin.toml format
-
-```toml
-[plugin]
-name = "My Pipeline Format"
-plugin_id = "myformat"                        # lowercase, used as table suffix
-command = ["infigraph-pipeline-extractor"]     # any executable that speaks the JSON protocol
-detect_patterns = ["## Source Systems", "## Scheduler"]  # regex patterns for auto-detection
-
-# Per-plugin table columns (creates Pipeline_myformat node table)
-[[plugin.schema]]
-name = "scheduler_type"
-col_type = "STRING"    # STRING | INT64 | BOOL | DOUBLE | STRING[]
-
-[[plugin.schema]]
-name = "compliance"
-col_type = "STRING"
-
-[plugin.dependency_fields]
-inputs = "core.inputs"
-outputs = "core.outputs"
-```
-
-### JSON IPC protocol
-
-**Startup:** Plugin writes `{"ready": true, "plugin_id": "myformat", "version": "1.0"}`
-
-**Extract command** (infigraph → plugin stdin):
-```json
-{"command": "extract", "content": "...", "title": "My Pipeline", "doc_id": "doc::123"}
-```
-
-**Response** (plugin stdout):
-```json
-{
-  "status": "ok",
-  "data": {
-    "core": {"name": "My Pipeline", "inputs": ["src.table_a"], "outputs": ["dm.table_b"]},
-    "properties": {"scheduler_type": "Airflow", "compliance": "SOX"}
-  }
-}
-```
-
-Or `{"status": "skip"}` if the document doesn't match this plugin's format.
-
-### Schema: shared core + per-plugin tables
-
-All plugins share a `PipelineCore` table for cross-plugin dependency linking:
-
-```
-PipelineCore: id, name, doc_id, plugin_id, inputs[], outputs[]
-```
-
-Each plugin gets its own detail table (e.g. `Pipeline_myformat`) for format-specific fields. Cross-plugin queries (impact analysis, dependency graphs) use `PipelineCore.inputs/outputs`.
-
-### Built-in extractor
-
-Infigraph ships `infigraph-pipeline-extractor` — a reference implementation that extracts pipeline metadata from Confluence-style design documents with sections like Source Systems, Destination Tables, Scheduler, Compliance, DACI, etc. It ships as a compiled Rust binary with zero runtime dependencies.
-
-### MCP tools
-
-| Tool | Description |
-|------|-------------|
-| `pipeline_plugins` | List loaded pipeline plugins |
-| `pipeline_deps` | Show pipeline dependency graph |
-| `pipeline_impact` | Transitive impact analysis for a table/dataset |
-| `pipeline_compliance` | Query pipelines by compliance scope |
-| `pipeline_query` | Generic query against plugin-specific fields |
-
-### Writing a custom plugin
-
-1. Create `~/.infigraph/pipelines/my-plugin/plugin.toml`
-2. Define your schema columns and detection patterns
-3. Implement an extractor (any language) that reads JSON from stdin, writes JSON to stdout
-4. Test: `echo '{"command":"extract","content":"...","title":"Test","doc_id":"test::1"}' | ./my-extractor`
+Quick overview:
+- Drop a `plugin.toml` + extractor binary in `~/.infigraph/pipelines/<name>/` or `<project>/pipelines/<name>/`
+- Infigraph auto-discovers plugins, detects matching documents, extracts metadata via subprocess
+- Shared `PipelineCore` table enables cross-plugin dependency graphs and impact analysis
+- 5 MCP tools: `pipeline_plugins`, `pipeline_deps`, `pipeline_impact`, `pipeline_compliance`, `pipeline_query`
 
 ## Building from Source
 
