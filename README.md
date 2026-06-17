@@ -1,5 +1,9 @@
 # Infigraph
 
+<div align="center">
+  <img src="branding-system/logos/infigraph-light.png" alt="Infigraph" width="600" />
+</div>
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![GitHub Release](https://img.shields.io/github/v/release/intuit/infigraph?sort=semver)](https://github.com/intuit/infigraph/releases)
@@ -960,6 +964,14 @@ const ATTR_KINDS: &[&str] = &[
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, code style, and how to add a language or submit a PR.
+
+---
+
+<div align="center">
+  <img src="branding-system/banners/bottom-banner1-light.png" alt="Infigraph Footer" width="600" />
+</div>
+
+---
 
 ## License
 

@@ -14,6 +14,9 @@ search_enabled: true
 search_tokenizer_separator: /[\s/]+/
 heading_anchors: true
 
+# Logo in navbar (from branding-system/logos/)
+logo: /infigraph/assets/branding/logo.svg
+
 # Navigation (sidebar)
 aux_links:
   "GitHub": https://github.com/intuit/infigraph
