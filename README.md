@@ -203,7 +203,16 @@ This means:
 
 **No Docker, no Python, no Node.js required** — everything is self-contained.
 
-### macOS / Linux
+### From crates.io (recommended)
+
+```bash
+cargo install infigraph-cli infigraph-mcp
+infigraph install
+```
+
+Works on macOS, Windows, and Linux. Requires [Rust](https://rustup.rs/) and `cmake`.
+
+### macOS / Linux (one-liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/intuit/infigraph/main/install.sh | bash
