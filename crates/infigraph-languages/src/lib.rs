@@ -175,7 +175,9 @@ const CUDA_RELATIONS: &str = include_str!("../languages/cuda/relations.scm");
 const PASCAL_ENTITIES: &str = include_str!("../languages/pascal/entities.scm");
 const PASCAL_RELATIONS: &str = include_str!("../languages/pascal/relations.scm");
 
+#[cfg(feature = "vb6")]
 const VB6_ENTITIES: &str = include_str!("../languages/vb6/entities.scm");
+#[cfg(feature = "vb6")]
 const VB6_RELATIONS: &str = include_str!("../languages/vb6/relations.scm");
 
 /// Create a registry with all bundled language packs.
@@ -416,6 +418,7 @@ pub fn bundled_registry() -> Result<LanguageRegistry> {
         Ok(pack) => registry.register(pack),
         Err(e) => eprintln!("warning: failed to load Pascal/Delphi language pack: {e}"),
     }
+    #[cfg(feature = "vb6")]
     match vb6_pack() {
         Ok(pack) => registry.register(pack),
         Err(e) => eprintln!("warning: failed to load VB6 language pack: {e}"),
@@ -1010,6 +1013,7 @@ fn pascal_pack() -> Result<LanguagePack> {
     )
 }
 
+#[cfg(feature = "vb6")]
 fn vb6_pack() -> Result<LanguagePack> {
     let grammar = tree_sitter_vb6::language();
     LanguagePack::new(
@@ -1181,11 +1185,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vb6")]
     fn test_vb6_pack() {
         vb6_pack().expect("VB6 pack should load");
     }
 
     #[test]
+    #[cfg(feature = "vb6")]
     fn test_vb6_e2e_smoke() {
         let pack = vb6_pack().expect("VB6 pack should load");
         // Note: the tree-sitter-vb6 grammar parses `Call Foo(args)` incorrectly (Call becomes

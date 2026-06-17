@@ -3,6 +3,11 @@ name = "infigraph-pipeline-plugin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["pipeline", "etl", "data-lineage", "plugin", "metadata"]
+categories = ["development-tools"]
+readme.workspace = true
 description = "Runtime pipeline plugin system — load pipeline extractors via subprocess"
 
 [dependencies]

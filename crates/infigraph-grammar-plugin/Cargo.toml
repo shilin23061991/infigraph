@@ -3,10 +3,15 @@ name = "infigraph-grammar-plugin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["antlr", "grammar", "plugin", "parser", "code-intelligence"]
+categories = ["development-tools", "parser-implementations"]
+readme.workspace = true
 description = "Runtime ANTLR grammar plugin system — load .g4 grammars via JVM subprocess"
 
 [dependencies]
-infigraph-core = { path = "../infigraph-core" }
+infigraph-core = { path = "../infigraph-core", version = "1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

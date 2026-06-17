@@ -3,6 +3,11 @@ name = "infigraph-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["cli", "code-analysis", "impact-analysis", "developer-tools", "codebase"]
+categories = ["development-tools", "command-line-utilities"]
+readme.workspace = true
 description = "CLI for infigraph — AST-powered code analysis and impact review"
 
 [[bin]]
@@ -32,9 +37,9 @@ path = "src/bin/cozo_vs_kuzu.rs"
 [dependencies]
 infigraph-core.workspace = true
 infigraph-languages.workspace = true
-infigraph-grammar-plugin = { path = "../infigraph-grammar-plugin" }
-infigraph-docs = { path = "../infigraph-docs" }
-infigraph-confluence = { path = "../infigraph-confluence" }
+infigraph-grammar-plugin = { path = "../infigraph-grammar-plugin", version = "1.0.0" }
+infigraph-docs = { path = "../infigraph-docs", version = "1.0.0" }
+infigraph-confluence = { path = "../infigraph-confluence", version = "1.0.0" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

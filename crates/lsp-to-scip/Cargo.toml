@@ -3,6 +3,11 @@ name = "lsp-to-scip"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["lsp", "scip", "code-navigation", "language-server", "indexer"]
+categories = ["development-tools"]
+readme.workspace = true
 description = "Generic LSP → SCIP bridge: spawn any LSP server and generate index.scip"
 
 [[bin]]

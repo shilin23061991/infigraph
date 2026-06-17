@@ -3,6 +3,11 @@ name = "infigraph-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["mcp", "ai-tools", "code-intelligence", "language-server", "llm"]
+categories = ["development-tools"]
+readme.workspace = true
 description = "MCP server for infigraph — exposes code graph tools to AI agents"
 
 [[bin]]
@@ -11,10 +16,10 @@ path = "src/main.rs"
 
 [dependencies]
 infigraph-core.workspace = true
-infigraph-languages = { path = "../infigraph-languages" }
-infigraph-docs = { path = "../infigraph-docs" }
-infigraph-confluence = { path = "../infigraph-confluence" }
-infigraph-pipeline-plugin = { path = "../infigraph-pipeline-plugin" }
+infigraph-languages = { path = "../infigraph-languages", version = "1.0.0" }
+infigraph-docs = { path = "../infigraph-docs", version = "1.0.0" }
+infigraph-confluence = { path = "../infigraph-confluence", version = "1.0.0" }
+infigraph-pipeline-plugin = { path = "../infigraph-pipeline-plugin", version = "1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

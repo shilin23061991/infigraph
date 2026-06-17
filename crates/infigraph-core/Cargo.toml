@@ -3,6 +3,11 @@ name = "infigraph-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ast", "code-analysis", "graph-database", "tree-sitter", "code-intelligence"]
+categories = ["development-tools", "parser-implementations"]
+readme.workspace = true
 description = "AST-powered code analysis framework — parser, graph, diff, and analysis engine"
 
 [dependencies]

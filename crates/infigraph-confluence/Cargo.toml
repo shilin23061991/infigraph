@@ -3,10 +3,15 @@ name = "infigraph-confluence"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["confluence", "atlassian", "wiki", "document-ingestion", "knowledge-base"]
+categories = ["development-tools", "web-programming"]
+readme.workspace = true
 description = "Confluence ingestion for Infigraph — fetch, parse, and index Confluence pages into the document graph"
 
 [dependencies]
-infigraph-docs = { path = "../infigraph-docs" }
+infigraph-docs = { path = "../infigraph-docs", version = "1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

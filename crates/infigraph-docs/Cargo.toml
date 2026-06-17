@@ -3,10 +3,15 @@ name = "infigraph-docs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["document-search", "pdf", "indexing", "full-text-search", "docx"]
+categories = ["development-tools", "text-processing"]
+readme.workspace = true
 description = "Document indexing and search for Infigraph — PDF, DOCX, PPTX, XLSX, Markdown, and plain text"
 
 [dependencies]
-infigraph-core = { path = "../infigraph-core" }
+infigraph-core = { path = "../infigraph-core", version = "1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -3,6 +3,11 @@ name = "infigraph-languages"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["tree-sitter", "language-support", "syntax", "parser", "multilingual"]
+categories = ["development-tools", "parser-implementations"]
+readme.workspace = true
 description = "Bundled language packs for infigraph (Tree-sitter grammars + extraction queries)"
 
 [dependencies]
@@ -66,7 +71,11 @@ tree-sitter-md = "0.5"
 tree-sitter-clojure-orchard = "0.2"
 tree-sitter-cuda = "0.21"
 tree-sitter-pascal = "0.10.2"
-tree-sitter-vb6 = { git = "https://github.com/andersonm3ai/tree-sitter-vb6", rev = "cfe941a25a2589cbfdcda35956857eeb4d0bf3e9" }
+tree-sitter-vb6 = { version = "0.0.1", git = "https://github.com/andersonm3ai/tree-sitter-vb6", rev = "cfe941a25a2589cbfdcda35956857eeb4d0bf3e9", optional = true }
+
+[features]
+default = []
+vb6 = ["dep:tree-sitter-vb6"]
 
 [dev-dependencies]
 tempfile = "3"
