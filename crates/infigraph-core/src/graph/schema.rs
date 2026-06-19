@@ -29,7 +29,6 @@ pub const CREATE_SCHEMA: &[&str] = &[
         complexity INT32,
         parameters STRING,
         return_type STRING,
-        embedding FLOAT[],
         PRIMARY KEY(id)
     )",
     "CREATE NODE TABLE IF NOT EXISTS Module(

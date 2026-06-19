@@ -788,6 +788,10 @@ impl CozoStore {
             ("tested_by", "symbol_id", "test_id"),
             ("reads_rel", "reader", "target"),
             ("writes_rel", "writer", "target"),
+            ("has_concern", "symbol_id", "concern_id"),
+            ("has_config", "symbol_id", "config_id"),
+            ("resolves_to", "source", "target"),
+            ("taint_flow", "source", "target"),
         ] {
             let q = format!(
                 "?[{col_a}, {col_b}] := *defines{{file_id: $file, symbol_id: {col_a}}}, *{rel}{{{col_a}, {col_b}}}
@@ -1105,6 +1109,165 @@ impl CozoStore {
         self.stats()
     }
 
+    // ── Parity methods (match GraphStore interface) ─────────────────────
+
+    pub fn get_file_hashes(&self) -> Result<HashMap<String, String>> {
+        let r = self.run(r#"?[file, content_hash] := *module{file, content_hash}"#)?;
+        let mut map = HashMap::new();
+        for row in &r.rows {
+            map.insert(dv_str(&row[0]), dv_str(&row[1]));
+        }
+        Ok(map)
+    }
+
+    pub fn get_all_symbols(&self) -> Result<Vec<(String, String, String, String)>> {
+        let r = self.run(r#"?[name, id, file, kind] := *symbol{id, name, file, kind}"#)?;
+        Ok(r.rows.iter().map(|row| (
+            dv_str(&row[0]),
+            dv_str(&row[1]),
+            dv_str(&row[2]),
+            dv_str(&row[3]),
+        )).collect())
+    }
+
+    pub fn remove_file(&self, file: &str) -> Result<()> {
+        self.delete_file_data(file)
+    }
+
+    pub fn upsert_all_bulk(&self, extractions: &[FileExtraction]) -> Result<()> {
+        for e in extractions {
+            self.upsert_file_batch(e)?;
+        }
+        self.invalidate_caches()
+    }
+
+    pub fn derive_tested_by_edges(&self) -> Result<usize> {
+        let _ = self.run_params(
+            r#"?[symbol_id, test_id] := *tested_by{symbol_id, test_id}
+            :rm tested_by {symbol_id, test_id}"#,
+            empty_params(), true,
+        );
+        self.run_params(
+            r#"?[symbol_id, test_id] := *calls{caller: test_id, callee: symbol_id},
+                *symbol{id: test_id, kind: "Test"},
+                *symbol{id: symbol_id, kind},
+                kind != "Test"
+            :put tested_by {symbol_id, test_id}"#,
+            empty_params(), true,
+        )?;
+        let r = self.run(r#"?[count(symbol_id)] := *tested_by{symbol_id}"#)?;
+        Ok(dv_u64(&r) as usize)
+    }
+
+    pub fn cross_cutting_for(&self, symbol_id: &str) -> Result<Vec<(String, String)>> {
+        let mut params = empty_params();
+        params.insert("sym".into(), DataValue::Str(symbol_id.into()));
+        let r = self.run_params(
+            r#"?[kind, detail] := *has_concern{symbol_id: $sym, concern_id: cid}, *concern{id: cid, kind, detail}"#,
+            params, false,
+        )?;
+        Ok(r.rows.iter().map(|row| (dv_str(&row[0]), dv_str(&row[1]))).collect())
+    }
+
+    pub fn upsert_folders_bulk(&self, file_paths: &[&str]) -> Result<()> {
+        let mut all_folders: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for file_path in file_paths {
+            let parts: Vec<&str> = file_path.rsplitn(2, '/').collect();
+            if parts.len() < 2 { continue; }
+            let dir_path = parts[1];
+            let segments: Vec<&str> = dir_path.split('/').collect();
+            for i in 0..segments.len() {
+                all_folders.insert(segments[..=i].join("/"));
+            }
+        }
+        if all_folders.is_empty() { return Ok(()); }
+
+        let folder_rows: Vec<(String, String, String)> = all_folders.iter().map(|fp| {
+            let name = fp.rsplit_once('/').map(|(_, n)| n).unwrap_or(fp.as_str());
+            (fp.clone(), name.to_string(), fp.clone())
+        }).collect();
+        self.import_folders(&folder_rows)?;
+
+        let cf_pairs: Vec<(String, String)> = all_folders.iter().filter_map(|child| {
+            child.rsplit_once('/').map(|(p, _)| p).and_then(|parent_path| {
+                if all_folders.contains(parent_path) {
+                    Some((parent_path.to_string(), child.clone()))
+                } else {
+                    None
+                }
+            })
+        }).collect();
+        self.import_edges("contains_folder", &cf_pairs)?;
+
+        let cfile_pairs: Vec<(String, String)> = file_paths.iter().filter_map(|fp| {
+            let parts: Vec<&str> = fp.rsplitn(2, '/').collect();
+            if parts.len() < 2 { return None; }
+            Some((parts[1].to_string(), fp.to_string()))
+        }).collect();
+        self.import_edges("contains_file", &cfile_pairs)?;
+
+        Ok(())
+    }
+
+    pub fn import_concerns(&self, rows: &[(String, String, String)]) -> Result<()> {
+        if rows.is_empty() { return Ok(()); }
+        let headers = vec!["id".into(), "kind".into(), "detail".into()];
+        let data_rows: Vec<Vec<DataValue>> = rows.iter().map(|r| vec![
+            DataValue::Str(r.0.clone().into()),
+            DataValue::Str(r.1.clone().into()),
+            DataValue::Str(r.2.clone().into()),
+        ]).collect();
+        let named = NamedRows::new(headers, data_rows);
+        let mut map = BTreeMap::new();
+        map.insert("concern".to_string(), named);
+        self.db.import_relations(map)
+            .map_err(|e| anyhow::anyhow!("import concerns: {e}"))
+    }
+
+    pub fn import_config_bindings(&self, rows: &[(String, String, String, String, String, String)]) -> Result<()> {
+        if rows.is_empty() { return Ok(()); }
+        let headers = vec!["id".into(), "kind".into(), "key".into(), "value".into(), "profile".into(), "source_file".into()];
+        let data_rows: Vec<Vec<DataValue>> = rows.iter().map(|r| vec![
+            DataValue::Str(r.0.clone().into()), DataValue::Str(r.1.clone().into()),
+            DataValue::Str(r.2.clone().into()), DataValue::Str(r.3.clone().into()),
+            DataValue::Str(r.4.clone().into()), DataValue::Str(r.5.clone().into()),
+        ]).collect();
+        let named = NamedRows::new(headers, data_rows);
+        let mut map = BTreeMap::new();
+        map.insert("config_binding".to_string(), named);
+        self.db.import_relations(map)
+            .map_err(|e| anyhow::anyhow!("import config_bindings: {e}"))
+    }
+
+    pub fn import_taint_flows(&self, rows: &[(String, String, String, String, String)]) -> Result<()> {
+        if rows.is_empty() { return Ok(()); }
+        let headers = vec!["source".into(), "target".into(), "source_kind".into(), "sink_kind".into(), "path".into()];
+        let data_rows: Vec<Vec<DataValue>> = rows.iter().map(|r| vec![
+            DataValue::Str(r.0.clone().into()), DataValue::Str(r.1.clone().into()),
+            DataValue::Str(r.2.clone().into()), DataValue::Str(r.3.clone().into()),
+            DataValue::Str(r.4.clone().into()),
+        ]).collect();
+        let named = NamedRows::new(headers, data_rows);
+        let mut map = BTreeMap::new();
+        map.insert("taint_flow".to_string(), named);
+        self.db.import_relations(map)
+            .map_err(|e| anyhow::anyhow!("import taint_flows: {e}"))
+    }
+
+    pub fn import_resolves_to(&self, rows: &[(String, String, String, String)]) -> Result<()> {
+        if rows.is_empty() { return Ok(()); }
+        let headers = vec!["source".into(), "target".into(), "mechanism".into(), "config_source".into()];
+        let data_rows: Vec<Vec<DataValue>> = rows.iter().map(|r| vec![
+            DataValue::Str(r.0.clone().into()), DataValue::Str(r.1.clone().into()),
+            DataValue::Str(r.2.clone().into()), DataValue::Str(r.3.clone().into()),
+        ]).collect();
+        let named = NamedRows::new(headers, data_rows);
+        let mut map = BTreeMap::new();
+        map.insert("resolves_to".to_string(), named);
+        self.db.import_relations(map)
+            .map_err(|e| anyhow::anyhow!("import resolves_to: {e}"))
+    }
+
     pub fn relation_counts(&self) -> Result<BTreeMap<String, u64>> {
         let relations = [
             ("symbol", "id"), ("module", "id"), ("cluster", "id"),
@@ -1118,6 +1281,9 @@ impl CozoStore {
             ("bridge_to", "source"), ("contains_file", "folder_id"),
             ("contains_folder", "parent_id"), ("defines", "file_id"),
             ("calls_service", "caller"), ("has_statement", "symbol_id"),
+            ("concern", "id"), ("has_concern", "symbol_id"),
+            ("config_binding", "id"), ("has_config", "symbol_id"),
+            ("resolves_to", "source"), ("taint_flow", "source"),
         ];
         let mut counts = BTreeMap::new();
         for (rel, col) in &relations {
@@ -1131,6 +1297,10 @@ impl CozoStore {
 }
 
 // ── Schema ────────────────────────────────────────────────────────────
+
+pub fn cozo_schema_ddl() -> Vec<&'static str> {
+    COZO_SCHEMA.to_vec()
+}
 
 const COZO_SCHEMA: &[&str] = &[
     ":create symbol {id: String => name: String, kind: String, file: String, start_line: Int, end_line: Int, signature_hash: String default \"\", language: String default \"\", visibility: String default \"\", parent: String default \"\", docstring: String default \"\", complexity: Int default 1, parameters: String default \"\", return_type: String default \"\"}",
@@ -1156,6 +1326,12 @@ const COZO_SCHEMA: &[&str] = &[
     ":create defines {file_id: String, symbol_id: String}",
     ":create calls_service {caller: String, target: String, method: String default \"\", path: String default \"\", target_service: String default \"\"}",
     ":create has_statement {symbol_id: String, statement_id: String}",
+    ":create concern {id: String => kind: String, detail: String default \"\"}",
+    ":create has_concern {symbol_id: String, concern_id: String}",
+    ":create config_binding {id: String => kind: String, key: String, value: String default \"\", profile: String default \"\", source_file: String default \"\"}",
+    ":create has_config {symbol_id: String, config_id: String}",
+    ":create resolves_to {source: String, target: String, mechanism: String default \"\", config_source: String default \"\"}",
+    ":create taint_flow {source: String, target: String, source_kind: String default \"\", sink_kind: String default \"\", path: String default \"\"}",
     // Materialized helpers for fast aggregation
     ":create meta_cache {key: String => val: Int}",
     ":create testable_cache {id: String}",
@@ -1178,6 +1354,10 @@ const COZO_INDICES: &[&str] = &[
     "::index create contains_folder:contains_folder_by_child {child_id}",
     "::index create calls_service:calls_svc_by_target {target}",
     "::index create member_of:member_by_cluster {cluster_id}",
+    "::index create has_concern:has_concern_by_concern {concern_id}",
+    "::index create has_config:has_config_by_config {config_id}",
+    "::index create resolves_to:resolves_to_by_target {target}",
+    "::index create taint_flow:taint_flow_by_target {target}",
     // Symbol column indices for filtered scans
     "::index create symbol:symbol_by_file {file}",
     "::index create symbol:symbol_by_kind {kind}",
@@ -1195,6 +1375,10 @@ fn edge_columns(relation: &str) -> (&'static str, &'static str) {
         "has_statement" => ("symbol_id", "statement_id"),
         "reads_rel" => ("reader", "target"),
         "writes_rel" => ("writer", "target"),
+        "has_concern" => ("symbol_id", "concern_id"),
+        "has_config" => ("symbol_id", "config_id"),
+        "resolves_to" => ("source", "target"),
+        "taint_flow" => ("source", "target"),
         _ => ("source", "target"),
     }
 }

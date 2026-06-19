@@ -211,6 +211,8 @@ fn main() -> Result<()> {
         ("MEMBER_OF",     "member_of",     "(a:Symbol)-[r:MEMBER_OF]->(b:Cluster)", "a.id, b.id"),
         ("CONTAINS_FILE",   "contains_file",   "(a:Folder)-[r:CONTAINS_FILE]->(b:File)", "a.id, b.id"),
         ("CONTAINS_FOLDER", "contains_folder", "(a:Folder)-[r:CONTAINS_FOLDER]->(b:Folder)", "a.id, b.id"),
+        ("HAS_CONCERN",     "has_concern",     "(a:Symbol)-[r:HAS_CONCERN]->(b:Concern)", "a.id, b.id"),
+        ("HAS_CONFIG",      "has_config",      "(a:Symbol)-[r:HAS_CONFIG]->(b:ConfigBinding)", "a.id, b.id"),
     ];
 
     for (label, relation, pattern, ret) in &simple_edges {
@@ -228,6 +230,45 @@ fn main() -> Result<()> {
         let count = pairs.len();
         cozo.import_edges(relation, &pairs)?;
         eprintln!(" {} edges", count);
+    }
+
+    // ── 8b. Concern nodes ─────────────────────────────────────────────
+    {
+        eprint!("Migrating Concern nodes...");
+        let mut result = conn.query(
+            "MATCH (c:Concern) RETURN c.id, c.kind, c.detail"
+        ).map_err(|e| anyhow::anyhow!("query Concern: {e}"))?;
+
+        let mut rows = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 3 {
+                rows.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
+            }
+        }
+        let count = rows.len();
+        cozo.import_concerns(&rows)?;
+        eprintln!(" {} nodes", count);
+    }
+
+    // ── 8c. ConfigBinding nodes ──────────────────────────────────────
+    {
+        eprint!("Migrating ConfigBinding nodes...");
+        let mut result = conn.query(
+            "MATCH (c:ConfigBinding) RETURN c.id, c.kind, c.key, c.value, c.`profile`, c.source_file"
+        ).map_err(|e| anyhow::anyhow!("query ConfigBinding: {e}"))?;
+
+        let mut rows = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 6 {
+                rows.push((
+                    row[0].to_string(), row[1].to_string(), row[2].to_string(),
+                    row[3].to_string(), row[4].to_string(), row[5].to_string(),
+                ));
+            }
+        }
+        let count = rows.len();
+        cozo.import_config_bindings(&rows)?;
+        eprintln!(" {} nodes", count);
     }
 
     // ── 9. Rich edge relations (extra columns) ──────────────────────
@@ -326,13 +367,56 @@ fn main() -> Result<()> {
         eprintln!(" {} edges", count);
     }
 
+    // RESOLVES_TO: source, target, mechanism, config_source
+    {
+        eprint!("Migrating RESOLVES_TO...");
+        let mut result = conn.query(
+            "MATCH (a:Symbol)-[r:RESOLVES_TO]->(b:Symbol) RETURN a.id, b.id, r.mechanism, r.config_source"
+        ).map_err(|e| anyhow::anyhow!("query RESOLVES_TO: {e}"))?;
+
+        let mut rows = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 4 {
+                rows.push((
+                    row[0].to_string(), row[1].to_string(),
+                    row[2].to_string(), row[3].to_string(),
+                ));
+            }
+        }
+        let count = rows.len();
+        cozo.import_resolves_to(&rows)?;
+        eprintln!(" {} edges", count);
+    }
+
+    // TAINT_FLOW: source, target, source_kind, sink_kind, path
+    {
+        eprint!("Migrating TAINT_FLOW...");
+        let mut result = conn.query(
+            "MATCH (a:Symbol)-[r:TAINT_FLOW]->(b:Symbol) RETURN a.id, b.id, r.source_kind, r.sink_kind, r.path"
+        ).map_err(|e| anyhow::anyhow!("query TAINT_FLOW: {e}"))?;
+
+        let mut rows = Vec::new();
+        while let Some(row) = result.next() {
+            if row.len() >= 5 {
+                rows.push((
+                    row[0].to_string(), row[1].to_string(),
+                    row[2].to_string(), row[3].to_string(), row[4].to_string(),
+                ));
+            }
+        }
+        let count = rows.len();
+        cozo.import_taint_flows(&rows)?;
+        eprintln!(" {} edges", count);
+    }
+
     // ── 10. Custom language edges (dynamic) ──────────────────────────
     {
         let known_edges: std::collections::HashSet<&str> = [
             "CALLS", "DEPENDS_ON", "IMPORTS", "CONTAINS", "INHERITS",
             "TESTED_BY", "READS", "WRITES", "MEMBER_OF", "SIMILAR_TO",
             "BRIDGE_TO", "CONTAINS_FILE", "CONTAINS_FOLDER", "DEFINES",
-            "CALLS_SERVICE", "HAS_STATEMENT",
+            "CALLS_SERVICE", "HAS_STATEMENT", "HAS_CONCERN", "HAS_CONFIG",
+            "RESOLVES_TO", "TAINT_FLOW",
         ].into_iter().collect();
 
         let mut result = conn.query("CALL show_tables() RETURN *")
@@ -405,6 +489,12 @@ fn main() -> Result<()> {
         ("defines",        "MATCH ()-[r:DEFINES]->() RETURN count(r)",       "defines"),
         ("calls_service",  "MATCH ()-[r:CALLS_SERVICE]->() RETURN count(r)", "calls_service"),
         ("has_statement",  "MATCH ()-[r:HAS_STATEMENT]->() RETURN count(r)", "has_statement"),
+        ("concern",        "MATCH (n:Concern) RETURN count(n)",              "concern"),
+        ("has_concern",    "MATCH ()-[r:HAS_CONCERN]->() RETURN count(r)",   "has_concern"),
+        ("config_binding", "MATCH (n:ConfigBinding) RETURN count(n)",        "config_binding"),
+        ("has_config",     "MATCH ()-[r:HAS_CONFIG]->() RETURN count(r)",    "has_config"),
+        ("resolves_to",    "MATCH ()-[r:RESOLVES_TO]->() RETURN count(r)",   "resolves_to"),
+        ("taint_flow",     "MATCH ()-[r:TAINT_FLOW]->() RETURN count(r)",    "taint_flow"),
     ];
 
     eprintln!("\n=== Migration Verification ===");

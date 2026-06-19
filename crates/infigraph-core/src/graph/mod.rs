@@ -19,3 +19,13 @@ pub use queries::{
 pub use session_store::{SessionData, SessionStore};
 pub use store::{GraphStats, GraphStore};
 pub use cozo_store::CozoStore;
+
+pub fn schema_ddl() -> Vec<&'static str> {
+    let mut all: Vec<&str> = schema::CREATE_SCHEMA.to_vec();
+    all.extend_from_slice(schema::MIGRATIONS);
+    all
+}
+
+pub fn cozo_schema_ddl() -> Vec<&'static str> {
+    cozo_store::cozo_schema_ddl()
+}
