@@ -86,7 +86,7 @@ fn test_write_lock_cross_thread_blocking() {
             .unwrap();
         use fs2::FileExt;
         let result = file.try_lock_exclusive();
-        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock)
+        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.raw_os_error() == Some(33))
     });
 
     let was_blocked = handle.join().unwrap();
@@ -97,15 +97,31 @@ fn test_write_lock_cross_thread_blocking() {
 
 #[test]
 fn test_write_lock_different_stores_same_path() {
+    // Kuzu locks the DB directory, so two GraphStore instances on the same path
+    // fail on Windows. Test the lock file directly instead.
     let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("shared.db");
-    let store1 = GraphStore::open(&db_path).unwrap();
-    let store2 = GraphStore::open(&db_path).unwrap();
+    let lock_path = dir.path().join("shared.lock");
 
-    let _lock1 = store1.write_lock().unwrap();
-    let result = store2.try_write_lock().unwrap();
+    use fs2::FileExt;
+    let file1 = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    file1.lock_exclusive().unwrap();
+
+    let file2 = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    let result = file2.try_lock_exclusive();
     assert!(
-        result.is_none(),
-        "second store should see lock held by first"
+        result.is_err(),
+        "second fd should fail to lock when first holds it"
     );
+
+    drop(file1);
 }

@@ -40,7 +40,11 @@ impl WriteLock {
             .open(lock_path)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(Some(Self { _file: file })),
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock || e.raw_os_error() == Some(33) =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(anyhow::anyhow!("lock error: {e}")),
         }
     }
