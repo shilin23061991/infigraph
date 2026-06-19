@@ -104,7 +104,8 @@ Examples:
 - **Cross-File Resolution:** Import-aware call resolution links function calls to actual definitions across files.
 - **HTTP Route-Aware:** Maps your API surface across 22 frameworks (Flask, Express, Spring, Actix, Phoenix, Rails, etc.).
 - **Multi-Repo/Microservice:** Group repos, cross-repo Cypher queries, HTTP contract extraction, cross-service dependency detection.
-- **PR Review & CI:** Symbol-level diff review with optional LLM enrichment. Configurable CI check gates (security, complexity, dead code, vulns).
+- **PR Review & CI:** Auto-detects PR type (bug fix, refactor, migration, feature) and scope. Runs semantic diff, blast radius, affected tests, security scan, complexity, dead code, clones — with optional LLM-enriched test plan and risk assessment. Cross-repo blast radius via groups. Configurable CI check gates.
+- **Test Context Generator:** `get_test_coverage` identifies untested symbols per file. `review` surfaces affected tests for changed code. Together they generate test context for AI agents writing tests.
 - **OSV Vulnerability Scanning:** Scans dependencies against the OSV database for known vulnerabilities.
 - **Design Pattern Detection:** Identifies Singleton, Factory, Observer, Strategy, Builder, and other patterns.
 - **Refactor Analysis:** Complexity hotspots, coupling, near-duplicate detection, dead code — ranked by impact/effort.
@@ -644,7 +645,8 @@ Replace `/path/to/infigraph-mcp` with the output of `which infigraph-mcp`.
 
 ### Analysis
 - **Refactor analysis** — complexity hotspots, coupling (fan-in/fan-out), near-duplicate detection, dead code, file size — ranked by impact/effort
-- **PR review** — symbol-level diff review with optional LLM enrichment (Anthropic API), cross-repo blast radius
+- **PR review** — auto-detects PR type (bug fix, refactor, migration, feature) and scope (standalone, cross-module, cross-repo). Runs: semantic diff, blast radius, affected tests, API surface changes, security scan, complexity delta, dead code, code clones, consistency checks. Set `group=` for cross-repo blast radius. Set `llm=true` for LLM-augmented review with test plan, risk assessment, and deployment notes
+- **Test context generation** — `get_test_coverage` per file: covered %, list of uncovered symbols. `review` includes affected tests for changed symbols. Together they provide test context for AI agents to write targeted tests
 - **CI check runner** — configurable checks (security, complexity, dead code, vuln scan) with pass/fail gates
 - **OSV vulnerability scanning** — scans dependencies against the OSV database for known vulnerabilities
 - **Design pattern detection** — identifies Singleton, Factory, Observer, Strategy, Builder, and other patterns
@@ -661,6 +663,57 @@ Replace `/path/to/infigraph-mcp` with the output of `which infigraph-mcp`.
 - HTTP route/endpoint detection across 22 languages (Flask, Express, Spring, Django, Gin, Actix, Phoenix, Rails, NestJS, and more)
 - Cross-service HTTP dependency detection (`group deps`) — scans URL strings, matches to contracts across repos
 - Bridge-to-call promotion — promotes detected cross-language bridges to CALLS edges for unified call graph analysis
+
+### PR Review
+
+Auto-detects PR type and scope, then runs a full analysis suite:
+
+```
+$ infigraph review                    # review last commit
+$ infigraph review --base main        # review branch vs main
+```
+
+**What it runs automatically:**
+- Semantic diff (added/removed/renamed/moved/changed symbols)
+- Blast radius — all symbols transitively affected
+- Affected tests — which test files cover changed symbols
+- API surface changes — public symbol additions/removals
+- Security scan — injection, secrets, eval, path traversal
+- Complexity delta — did complexity increase?
+- Dead code — did the change introduce unreachable code?
+- Code clones — near-duplicate detection against changed symbols
+- Consistency checks — naming, patterns
+
+**MCP usage:**
+```
+review(path="/my/repo", base_ref="main")           # basic review
+review(path="/my/repo", llm=true)                   # + LLM test plan & risk assessment
+review(path="/my/repo", group="my-services")        # cross-repo blast radius
+review(path="/my/repo", llm=true, dry_run=true)     # preview LLM prompt without calling API
+```
+
+### Test Context Generator
+
+Two tools work together to generate test context for AI agents:
+
+**`get_test_coverage`** — per-file analysis:
+- Covered % (how many symbols have TESTED_BY edges)
+- List of uncovered symbols with kind, line number, complexity
+- Use before writing tests to find what needs coverage
+
+**`review`** — affected tests for changed code:
+- Maps changed symbols → test files that cover them
+- Shows which tests need updating after a refactor
+- Identifies new symbols that have zero test coverage
+
+**Workflow — AI agent writing tests:**
+1. `get_test_coverage(file="src/auth.py")` → see 3 of 8 functions untested
+2. `symbol_context` on uncovered symbols → get signatures, callers, callees
+3. Agent writes targeted tests for the 5 uncovered functions
+
+**Workflow — PR review test plan:**
+1. `review(llm=true)` → LLM generates test plan based on affected tests + uncovered symbols
+2. Agent uses test plan to write tests for new/changed code
 
 ### Structured Ingestion
 
@@ -838,7 +891,7 @@ infigraph-mcp --ui --port=9749
 | `find_all_references` | Every location where a symbol is referenced |
 | `detect_dead_code` | Unreachable functions/methods with zero callers |
 | `detect_changes` | Git diff → affected symbols and blast radius |
-| `semantic_diff` | Symbol-level diff between git refs (added/removed/moved/changed) |
+| `semantic_diff` | Symbol-level diff between git refs (added/removed/renamed/moved/changed) |
 | `git_summary` | Symbol-level commit history (which functions changed per commit) |
 | `get_complexity` | Cyclomatic complexity metrics per symbol |
 | `detect_clones` | Near-duplicate functions via vector similarity |
@@ -853,7 +906,6 @@ infigraph-mcp --ui --port=9749
 | `detect_reflection` | Reflection/dynamic invocation scanner with config-file-based target resolution |
 | `detect_bridges` | Cross-language boundaries: FFI, JNI, cgo, gRPC, WASM, COM |
 | `detect_routes` | HTTP route/endpoint detection (22 frameworks) |
-| `get_test_coverage` | Test coverage analysis — covered %, uncovered symbols |
 | `refactor` | Refactoring analysis — complexity, coupling, duplication, size, dead code. Ranked recommendations with impact/effort scores |
 | **Architecture** | |
 | `get_architecture` | Codebase overview: language breakdown, hotspots, hub functions, entry points |
@@ -868,7 +920,10 @@ infigraph-mcp --ui --port=9749
 | `get_dependencies` | List external dependencies by ecosystem |
 | `scip_import` | Import SCIP index for compiler-grade enrichment |
 | **Review & CI** | |
-| `review` | PR review — symbol-level diff analysis with optional LLM enrichment |
+| `review` | PR review — auto-detects PR type/scope, runs semantic diff + blast radius + affected tests + security + complexity + dead code + clones. `llm=true` for LLM test plan & risk assessment. `group=` for cross-repo |
+| `get_test_coverage` | Test coverage analysis — covered %, uncovered symbols per file. Use to find untested code before writing tests |
+| **Cypher** | |
+| `query_graph` | Execute Cypher query against knowledge graph — full Cypher support for complex cross-cutting queries |
 | **Document Search** | |
 | `index_docs` | Index documents (PDF, DOCX, PPTX, Markdown, HTML) |
 | `reindex_docs` | Reindex all documents from scratch |
@@ -889,6 +944,10 @@ infigraph-mcp --ui --port=9749
 | `group_contracts` | List discovered contracts |
 | `group_deps` | Cross-service HTTP dependency detection |
 | `group_link` | Link cross-service deps as CALLS_SERVICE edges |
+| **Pipeline Plugins** | |
+| `pipeline_deps` | Dependency edges between pipelines — source/destination table overlap lineage |
+| `pipeline_impact` | Impact analysis: given a table name, find all affected pipelines (direct + transitive via DEPENDS_ON) |
+| `pipeline_compliance` | Find pipelines matching a compliance scope (e.g. 'irs 7216', 'gdpr', 'pii', 'ccpa') |
 | **Export & Visualization** | |
 | `export_graph` | Export as Cypher/GraphML/JSON |
 | `visualize` | Interactive HTML graph visualization |
@@ -904,6 +963,7 @@ infigraph-mcp --ui --port=9749
 | **Session Context** | |
 | `save_session` | Save session context to graph DB with TOUCHED edges + semantic embedding. Optional `name` param for named identity sessions (`named_{name}`). Auto-purges after configurable days (default: 30) |
 | `get_latest_session` | Retrieve most recent session — summary, pending tasks, decisions, linked files. Optional `name` param to recall by identity. Suggests purge if old sessions exist |
+| `search_sessions` | Semantic search across past sessions — finds sessions by meaning, ranked by relevance |
 | `purge_sessions` | Delete sessions older than N days (default: 30). User-initiated cleanup |
 
 ## Architecture
