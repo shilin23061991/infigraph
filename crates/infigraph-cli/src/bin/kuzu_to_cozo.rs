@@ -28,7 +28,7 @@ fn main() -> Result<()> {
 
     // ── 1. Symbols ─────────────────────────────────────────────────────
     eprintln!("Migrating symbols...");
-    let mut result = conn
+    let result = conn
         .query(
             "MATCH (s:Symbol) RETURN s.id, s.name, s.kind, s.file, s.start_line, s.end_line, \
          s.signature_hash, s.language, s.visibility, s.parent, s.docstring, s.complexity, \
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("query symbols: {e}"))?;
 
     let mut symbols = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 14 {
             symbols.push((
                 row[0].to_string(),  // id
@@ -64,14 +64,14 @@ fn main() -> Result<()> {
 
     // ── 2. Modules ─────────────────────────────────────────────────────
     eprintln!("Migrating modules...");
-    let mut result = conn
+    let result = conn
         .query(
             "MATCH (m:Module) RETURN m.id, m.name, m.file, m.language, m.content_hash, m.summary",
         )
         .map_err(|e| anyhow::anyhow!("query modules: {e}"))?;
 
     let mut modules = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 6 {
             modules.push((
                 row[0].to_string(),
@@ -90,12 +90,12 @@ fn main() -> Result<()> {
 
     // ── 3. Files ──────────────────────────────────────────────────────
     eprintln!("Migrating files...");
-    let mut result = conn
+    let result = conn
         .query("MATCH (f:File) RETURN f.id, f.name, f.path, f.language, f.symbol_count")
         .map_err(|e| anyhow::anyhow!("query files: {e}"))?;
 
     let mut files = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 5 {
             files.push((
                 row[0].to_string(),
@@ -113,12 +113,12 @@ fn main() -> Result<()> {
 
     // ── 4. Statements ─────────────────────────────────────────────────
     eprintln!("Migrating statements...");
-    let mut result = conn.query(
+    let result = conn.query(
         "MATCH (st:Statement) RETURN st.id, st.kind, st.condition, st.start_line, st.end_line, st.depth, st.parent_symbol"
     ).map_err(|e| anyhow::anyhow!("query statements: {e}"))?;
 
     let mut stmts = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 7 {
             stmts.push((
                 row[0].to_string(),
@@ -138,12 +138,12 @@ fn main() -> Result<()> {
 
     // ── 5. Folders ─────────────────────────────────────────────────────
     eprintln!("Migrating folders...");
-    let mut result = conn
+    let result = conn
         .query("MATCH (f:Folder) RETURN f.id, f.name, f.path")
         .map_err(|e| anyhow::anyhow!("query folders: {e}"))?;
 
     let mut folders = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 3 {
             folders.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
         }
@@ -155,12 +155,12 @@ fn main() -> Result<()> {
 
     // ── 6. Dependencies ──────────────────────────────────────────────
     eprintln!("Migrating dependencies...");
-    let mut result = conn
+    let result = conn
         .query("MATCH (d:Dependency) RETURN d.id, d.name, d.version, d.ecosystem, d.is_dev")
         .map_err(|e| anyhow::anyhow!("query dependencies: {e}"))?;
 
     let mut deps = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 5 {
             deps.push((
                 row[0].to_string(),
@@ -178,12 +178,12 @@ fn main() -> Result<()> {
 
     // ── 7. Clusters ──────────────────────────────────────────────────
     eprintln!("Migrating clusters...");
-    let mut result = conn
+    let result = conn
         .query("MATCH (c:Cluster) RETURN c.id, c.name, c.description")
         .map_err(|e| anyhow::anyhow!("query clusters: {e}"))?;
 
     let mut clusters = Vec::new();
-    while let Some(row) = result.next() {
+    for row in result {
         if row.len() >= 3 {
             clusters.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
         }
@@ -284,12 +284,12 @@ fn main() -> Result<()> {
     for (label, relation, pattern, ret) in &simple_edges {
         eprint!("Migrating {label}...");
         let q = format!("MATCH {pattern} RETURN {ret}");
-        let mut result = conn
+        let result = conn
             .query(&q)
             .map_err(|e| anyhow::anyhow!("query {label}: {e}"))?;
 
         let mut pairs = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 2 {
                 pairs.push((row[0].to_string(), row[1].to_string()));
             }
@@ -302,12 +302,12 @@ fn main() -> Result<()> {
     // ── 8b. Concern nodes ─────────────────────────────────────────────
     {
         eprint!("Migrating Concern nodes...");
-        let mut result = conn
+        let result = conn
             .query("MATCH (c:Concern) RETURN c.id, c.kind, c.detail")
             .map_err(|e| anyhow::anyhow!("query Concern: {e}"))?;
 
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 3 {
                 rows.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
             }
@@ -320,12 +320,12 @@ fn main() -> Result<()> {
     // ── 8c. ConfigBinding nodes ──────────────────────────────────────
     {
         eprint!("Migrating ConfigBinding nodes...");
-        let mut result = conn.query(
+        let result = conn.query(
             "MATCH (c:ConfigBinding) RETURN c.id, c.kind, c.key, c.value, c.`profile`, c.source_file"
         ).map_err(|e| anyhow::anyhow!("query ConfigBinding: {e}"))?;
 
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 6 {
                 rows.push((
                     row[0].to_string(),
@@ -346,13 +346,13 @@ fn main() -> Result<()> {
     // DEPENDS_ON: module_id, dep_id, is_dev
     {
         eprint!("Migrating DEPENDS_ON...");
-        let mut result = conn
+        let result = conn
             .query("MATCH (a:Module)-[r:DEPENDS_ON]->(b:Dependency) RETURN a.id, b.id, r.is_dev")
             .map_err(|e| anyhow::anyhow!("query DEPENDS_ON: {e}"))?;
 
         let headers = vec!["module_id".into(), "dep_id".into(), "is_dev".into()];
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 3 {
                 rows.push(vec![
                     cozo::DataValue::Str(row[0].to_string().into()),
@@ -369,13 +369,13 @@ fn main() -> Result<()> {
     // SIMILAR_TO: symbol_a, symbol_b, score
     {
         eprint!("Migrating SIMILAR_TO...");
-        let mut result = conn
+        let result = conn
             .query("MATCH (a:Symbol)-[r:SIMILAR_TO]->(b:Symbol) RETURN a.id, b.id, r.score")
             .map_err(|e| anyhow::anyhow!("query SIMILAR_TO: {e}"))?;
 
         let headers = vec!["symbol_a".into(), "symbol_b".into(), "score".into()];
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 3 {
                 rows.push(vec![
                     cozo::DataValue::Str(row[0].to_string().into()),
@@ -392,7 +392,7 @@ fn main() -> Result<()> {
     // BRIDGE_TO: source, target, bridge_kind, detail
     {
         eprint!("Migrating BRIDGE_TO...");
-        let mut result = conn.query(
+        let result = conn.query(
             "MATCH (a:Symbol)-[r:BRIDGE_TO]->(b:Symbol) RETURN a.id, b.id, r.bridge_kind, r.detail"
         ).map_err(|e| anyhow::anyhow!("query BRIDGE_TO: {e}"))?;
 
@@ -403,7 +403,7 @@ fn main() -> Result<()> {
             "detail".into(),
         ];
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 4 {
                 rows.push(vec![
                     cozo::DataValue::Str(row[0].to_string().into()),
@@ -421,7 +421,7 @@ fn main() -> Result<()> {
     // CALLS_SERVICE: caller, target, method, path, target_service
     {
         eprint!("Migrating CALLS_SERVICE...");
-        let mut result = conn.query(
+        let result = conn.query(
             "MATCH (a:Symbol)-[r:CALLS_SERVICE]->(b:Symbol) RETURN a.id, b.id, r.method, r.path, r.target_service"
         ).map_err(|e| anyhow::anyhow!("query CALLS_SERVICE: {e}"))?;
 
@@ -433,7 +433,7 @@ fn main() -> Result<()> {
             "target_service".into(),
         ];
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 5 {
                 rows.push(vec![
                     cozo::DataValue::Str(row[0].to_string().into()),
@@ -452,12 +452,12 @@ fn main() -> Result<()> {
     // RESOLVES_TO: source, target, mechanism, config_source
     {
         eprint!("Migrating RESOLVES_TO...");
-        let mut result = conn.query(
+        let result = conn.query(
             "MATCH (a:Symbol)-[r:RESOLVES_TO]->(b:Symbol) RETURN a.id, b.id, r.mechanism, r.config_source"
         ).map_err(|e| anyhow::anyhow!("query RESOLVES_TO: {e}"))?;
 
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 4 {
                 rows.push((
                     row[0].to_string(),
@@ -475,12 +475,12 @@ fn main() -> Result<()> {
     // TAINT_FLOW: source, target, source_kind, sink_kind, path
     {
         eprint!("Migrating TAINT_FLOW...");
-        let mut result = conn.query(
+        let result = conn.query(
             "MATCH (a:Symbol)-[r:TAINT_FLOW]->(b:Symbol) RETURN a.id, b.id, r.source_kind, r.sink_kind, r.path"
         ).map_err(|e| anyhow::anyhow!("query TAINT_FLOW: {e}"))?;
 
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 5 {
                 rows.push((
                     row[0].to_string(),
@@ -523,12 +523,12 @@ fn main() -> Result<()> {
         .into_iter()
         .collect();
 
-        let mut result = conn
+        let result = conn
             .query("CALL show_tables() RETURN *")
             .map_err(|e| anyhow::anyhow!("show_tables: {e}"))?;
 
         let mut custom_edges = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 2 {
                 let name = row[0].to_string();
                 let ttype = row[1].to_string();
@@ -542,18 +542,15 @@ fn main() -> Result<()> {
             eprint!("Migrating custom edge {edge_name}...");
             let lower = edge_name.to_lowercase();
             let schema_ddl = format!(":create {lower} {{source: String, target: String}}");
-            match cozo.create_custom_edge(&schema_ddl) {
-                Ok(_) => {}
-                Err(_) => {} // already exists
-            }
+            let _ = cozo.create_custom_edge(&schema_ddl); // already exists is OK
 
             let q = format!("MATCH (a:Symbol)-[r:{edge_name}]->(b:Symbol) RETURN a.id, b.id");
-            let mut result = conn
+            let result = conn
                 .query(&q)
                 .map_err(|e| anyhow::anyhow!("query {edge_name}: {e}"))?;
 
             let mut pairs = Vec::new();
-            while let Some(row) = result.next() {
+            for row in result {
                 if row.len() >= 2 {
                     pairs.push((row[0].to_string(), row[1].to_string()));
                 }
@@ -688,10 +685,7 @@ fn main() -> Result<()> {
     ];
 
     eprintln!("\n=== Migration Verification ===");
-    eprintln!(
-        "{:<20} {:>8} {:>8}  {}",
-        "Relation", "Kuzu", "CozoDB", "Status"
-    );
+    eprintln!("{:<20} {:>8} {:>8}  Status", "Relation", "Kuzu", "CozoDB");
     eprintln!("{}", "-".repeat(55));
 
     let mut mismatches = Vec::new();

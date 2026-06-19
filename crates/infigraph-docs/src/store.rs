@@ -510,11 +510,11 @@ impl DocStore {
             ),
             None => "MATCH (p:PipelineCore) RETURN p.id, p.name, p.doc_id, p.plugin_id, p.inputs, p.outputs".to_string(),
         };
-        let mut result = conn
+        let result = conn
             .query(&query)
             .map_err(|e| anyhow::anyhow!("query pipeline cores: {e}"))?;
         let mut records = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 6 {
                 records.push(PipelineCoreRecord {
                     id: row[0].to_string(),
@@ -560,14 +560,14 @@ impl DocStore {
         let mut results = Vec::new();
 
         // Direct impact: pipelines that consume this table
-        let mut direct = conn
+        let direct = conn
             .query(&format!(
                 "MATCH (p:PipelineCore) WHERE list_contains(p.inputs, '{}') RETURN p.id, p.name",
                 esc
             ))
             .map_err(|e| anyhow::anyhow!("impact_analysis direct: {e}"))?;
         let mut affected_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-        while let Some(row) = direct.next() {
+        for row in direct {
             if row.len() >= 2 {
                 let id = row[0].to_string();
                 let name = row[1].to_string();
@@ -589,14 +589,14 @@ impl DocStore {
                 let mut new_ids = Vec::new();
 
                 for src_id in &current_ids {
-                    let mut trans = conn
+                    let trans = conn
                         .query(&format!(
                             "MATCH (a:PipelineCore)-[:DEPENDS_ON]->(b:PipelineCore) WHERE b.id = '{}' RETURN a.id, a.name",
                             escape_str(src_id)
                         ))
                         .map_err(|e| anyhow::anyhow!("impact_analysis transitive: {e}"))?;
 
-                    while let Some(row) = trans.next() {
+                    for row in trans {
                         if row.len() >= 2 {
                             let id = row[0].to_string();
                             if !affected_ids.contains(&id) {
@@ -626,14 +626,14 @@ impl DocStore {
     /// Get all DEPENDS_ON edges as (from_name, to_name, dep_type) tuples.
     pub fn get_pipeline_deps(&self) -> Result<Vec<(String, String, String)>> {
         let conn = self.connection()?;
-        let mut result = conn
+        let result = conn
             .query(
                 "MATCH (c:PipelineCore)-[r:DEPENDS_ON]->(p:PipelineCore) \
                  RETURN c.name, p.name, r.dep_type",
             )
             .map_err(|e| anyhow::anyhow!("query pipeline deps: {e}"))?;
         let mut deps = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 3 {
                 deps.push((row[0].to_string(), row[1].to_string(), row[2].to_string()));
             }
@@ -651,14 +651,14 @@ impl DocStore {
         let conn = self.connection()?;
         let table = format!("Pipeline_{}", plugin_id);
         let esc_val = escape_str(value);
-        let mut result = conn
+        let result = conn
             .query(&format!(
                 "MATCH (p:{}) WHERE lower(p.{}) CONTAINS lower('{}') RETURN p.*",
                 table, field, esc_val
             ))
             .map_err(|e| anyhow::anyhow!("query plugin table: {e}"))?;
         let mut rows = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             let vals: Vec<serde_json::Value> = row
                 .iter()
                 .map(|v| serde_json::Value::String(v.to_string()))

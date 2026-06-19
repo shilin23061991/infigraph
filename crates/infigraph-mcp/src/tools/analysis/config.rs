@@ -31,10 +31,10 @@ pub fn tool_detect_config_bindings(args: &Value) -> Result<String> {
         .filter(|b| {
             kind_filter
                 .as_ref()
-                .map_or(true, |k| b.kind.to_lowercase() == *k)
+                .is_none_or(|k| b.kind.to_lowercase() == *k)
                 && profile_filter
                     .as_ref()
-                    .map_or(true, |p| b.profile.to_lowercase() == *p)
+                    .is_none_or(|p| b.profile.to_lowercase() == *p)
         })
         .cloned()
         .collect();

@@ -30,11 +30,8 @@ fn extract_after<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 fn extract_cozo_relations(schema: &[&str]) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for ddl in schema {
-        if ddl.starts_with(":create ") {
-            let rest = &ddl[8..];
-            let end = rest
-                .find(|c: char| c == ' ' || c == '{')
-                .unwrap_or(rest.len());
+        if let Some(rest) = ddl.strip_prefix(":create ") {
+            let end = rest.find([' ', '{']).unwrap_or(rest.len());
             names.insert(rest[..end].trim().to_string());
         }
     }
@@ -257,11 +254,8 @@ fn kuzu_table_name(ddl: &str) -> Option<String> {
 
 /// Extract relation name from CozoDB DDL.
 fn cozo_relation_name(ddl: &str) -> Option<String> {
-    if ddl.starts_with(":create ") {
-        let rest = &ddl[8..];
-        let end = rest
-            .find(|c: char| c == ' ' || c == '{')
-            .unwrap_or(rest.len());
+    if let Some(rest) = ddl.strip_prefix(":create ") {
+        let end = rest.find([' ', '{']).unwrap_or(rest.len());
         return Some(rest[..end].trim().to_string());
     }
     None

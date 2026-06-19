@@ -123,7 +123,7 @@ fn test_session_date_id_valid_components() {
     let year: i32 = date_part[0..4].parse().expect("year should be numeric");
     let month: i32 = date_part[5..7].parse().expect("month should be numeric");
     let day: i32 = date_part[8..10].parse().expect("day should be numeric");
-    assert!(year >= 2024 && year <= 2030, "year {year} out of range");
+    assert!((2024..=2030).contains(&year), "year {year} out of range");
     assert!((1..=12).contains(&month), "month {month} out of range");
     assert!((1..=31).contains(&day), "day {day} out of range");
 }

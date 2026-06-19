@@ -694,7 +694,7 @@ pub fn tool_generate_test_context(args: &Value) -> Result<String> {
     );
 
     if let Some(ref ex) = ctx.example_test {
-        out.push_str(&format!("\n### Example Test (style reference)\n"));
+        out.push_str("\n### Example Test (style reference)\n");
         out.push_str(&format!(
             "  {} — {}:{}-{}\n",
             ex.name, ex.file, ex.start_line, ex.end_line

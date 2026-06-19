@@ -169,7 +169,7 @@ fn test_check_all_categories_have_rules() {
 
     for cat in &categories {
         assert!(
-            format!("{:?}", cat).len() > 0,
+            !format!("{:?}", cat).is_empty(),
             "category {:?} should be representable",
             cat
         );

@@ -424,11 +424,11 @@ fn test_store_links_crud() {
     store.create_link("a.md", "b.md", "b.md", "local").unwrap();
 
     let conn = store.connection().unwrap();
-    let mut result = conn
+    let result = conn
         .query("MATCH (a:Document)-[l:LINKS_TO]->(b:Document) RETURN a.id, b.id, l.url")
         .unwrap();
     let mut found = false;
-    while let Some(row) = result.next() {
+    for row in result {
         if row[0].to_string() == "a.md" && row[1].to_string() == "b.md" {
             found = true;
         }
@@ -477,12 +477,12 @@ fn test_extract_and_link_doc_markdown_links() {
     extract_and_link_doc(&store, &source_doc, &all_doc_ids);
 
     let conn = store.connection().unwrap();
-    let mut result = conn.query(
+    let result = conn.query(
         "MATCH (a:Document)-[l:LINKS_TO]->(b:Document) WHERE a.id = 'docs/index.md' RETURN b.id, l.link_type"
     ).unwrap();
     let mut linked_to_guide = false;
     let mut linked_external = false;
-    while let Some(row) = result.next() {
+    for row in result {
         let target = row[0].to_string();
         if target == "docs/guide.md" {
             linked_to_guide = true;

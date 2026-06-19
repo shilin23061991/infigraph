@@ -8,6 +8,7 @@ fn make_cozo() -> (TempDir, CozoStore) {
     (dir, store)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_symbol(
     store: &CozoStore,
     id: &str,

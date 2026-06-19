@@ -30,7 +30,7 @@ pub fn tool_detect_taint_flows(args: &Value) -> Result<String> {
         .filter(|f| {
             category_filter
                 .as_ref()
-                .map_or(true, |c| f.sink_category.to_lowercase() == *c)
+                .is_none_or(|c| f.sink_category.to_lowercase() == *c)
                 && (show_sanitized || !f.sanitized)
         })
         .cloned()

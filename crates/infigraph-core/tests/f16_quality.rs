@@ -38,7 +38,7 @@ fn f32_to_f16_bits(v: f32) -> u16 {
         let shift = (1 - new_exp) as u32;
         let frac16 = frac_with_hidden >> (13 + shift);
         let round_bit = (frac_with_hidden >> (12 + shift)) & 1;
-        return ((sign << 15) | frac16 + round_bit) as u16;
+        return ((sign << 15) | (frac16 + round_bit)) as u16;
     }
 
     let frac16 = frac >> 13;
@@ -302,7 +302,7 @@ fn print_report(r: &QualityReport, dim: usize, count: usize) {
         q_total as f64 / 1048576.0,
         (1.0 - q_total as f64 / f32_total as f64) * 100.0
     );
-    eprintln!("");
+    eprintln!();
     eprintln!(
         "  {:>6} {:>10} {:>10} {:>10}",
         "Top-K", "Recall", "Perfect", "Max Disp"
@@ -429,7 +429,7 @@ fn compare_f16_vs_int8_quality() {
     );
 
     // === Sample query comparison ===
-    let qi = (0 * 31 + 7) % count;
+    let qi = 7 % count;
     let query = &embeddings[qi].1;
     let k = 10;
     let f32_top = top_k_search(query, &embeddings, k);

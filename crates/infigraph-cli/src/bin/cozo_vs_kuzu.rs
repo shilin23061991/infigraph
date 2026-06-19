@@ -177,6 +177,7 @@ fn main() -> Result<()> {
         );
         let iters: u128 = 10;
 
+        #[allow(clippy::type_complexity)]
         let queries: Vec<(
             &str,
             Box<dyn Fn() -> Result<()>>,
