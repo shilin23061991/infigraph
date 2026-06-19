@@ -200,13 +200,15 @@ pub fn ingest_data_cozo(
                         edge_col_vals.join(", "),
                         edge_col_names.join(", "),
                     );
-                    match db.run_script(
-                        &put_edge,
-                        std::collections::BTreeMap::new(),
-                        cozo::ScriptMutability::Mutable,
-                    ) {
-                        Ok(_) => edges_created += 1,
-                        Err(_) => {}
+                    if db
+                        .run_script(
+                            &put_edge,
+                            std::collections::BTreeMap::new(),
+                            cozo::ScriptMutability::Mutable,
+                        )
+                        .is_ok()
+                    {
+                        edges_created += 1;
                     }
                 }
             }
@@ -229,10 +231,7 @@ pub(crate) fn format_cozo_value(col_type: &str, val: Option<&serde_json::Value>)
             _ => "\"\"".to_string(),
         },
         Some(v) => match col_type {
-            "STRING" => format!(
-                "\"{}\"",
-                escape(&v.as_str().unwrap_or_default().to_string())
-            ),
+            "STRING" => format!("\"{}\"", escape(v.as_str().unwrap_or_default())),
             "INT64" => v.as_i64().unwrap_or(0).to_string(),
             "BOOL" => v.as_bool().unwrap_or(false).to_string(),
             "DOUBLE" => v.as_f64().unwrap_or(0.0).to_string(),

@@ -241,7 +241,7 @@ fn extract_string_assignment(line: &str) -> Option<(String, String)> {
 
     if let Some(eq_pos) = stripped.find('=') {
         if eq_pos > 0 && stripped.get(eq_pos + 1..eq_pos + 2) != Some("=") {
-            let var = stripped[..eq_pos].trim().split_whitespace().last()?;
+            let var = stripped[..eq_pos].split_whitespace().last()?;
             let rhs = stripped[eq_pos + 1..].trim();
             // Only track string literals
             if (rhs.starts_with('"') && rhs.ends_with('"'))

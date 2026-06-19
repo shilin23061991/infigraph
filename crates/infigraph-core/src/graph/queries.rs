@@ -62,12 +62,12 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
              RETURN st.kind, st.condition, st.start_line, st.depth ORDER BY st.start_line",
             symbol_id.replace('\'', "\\'")
         );
-        let mut result = self
+        let result = self
             .conn
             .query(&query)
             .map_err(|e| anyhow::anyhow!("branches_of failed: {e}"))?;
         let mut branches = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() >= 4 {
                 branches.push(BranchInfo {
                     kind: row[0].to_string(),
@@ -376,11 +376,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
         }
 
         let total = covered.len() + uncovered.len();
-        let pct = if total > 0 {
-            (covered.len() * 100) / total
-        } else {
-            0
-        };
+        let pct = (covered.len() * 100).checked_div(total).unwrap_or(0);
 
         Ok(TestCoverage {
             covered_count: covered.len(),
@@ -540,13 +536,13 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
                     s.visibility, s.parameters, s.return_type, s.complexity \
              ORDER BY s.complexity DESC, s.file, s.start_line",
         );
-        let mut result = self
+        let result = self
             .conn
             .query(&q)
             .map_err(|e| anyhow::anyhow!("generate_test_context query failed: {e}"))?;
 
         let mut targets = Vec::new();
-        while let Some(row) = result.next() {
+        for row in result {
             if row.len() < 10 {
                 continue;
             }
@@ -583,7 +579,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
             });
         }
 
-        targets.sort_by(|a, b| b.priority_score.cmp(&a.priority_score));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.priority_score));
         targets.truncate(limit);
 
         for t in &mut targets {
@@ -593,7 +589,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
             t.priority_score += t.callers.len() as u32 * 3;
         }
 
-        targets.sort_by(|a, b| b.priority_score.cmp(&a.priority_score));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.priority_score));
 
         Ok(TestContext {
             framework,
@@ -604,13 +600,13 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
 
     fn detect_test_framework(&self) -> Result<String> {
         let q = "MATCH (s:Symbol) WHERE s.kind = 'Test' RETURN s.docstring LIMIT 20";
-        let mut result = self
+        let result = self
             .conn
             .query(q)
             .map_err(|e| anyhow::anyhow!("detect_test_framework failed: {e}"))?;
 
         let mut frameworks = std::collections::HashMap::new();
-        while let Some(row) = result.next() {
+        for row in result {
             let doc = row.first().map(|v| v.to_string()).unwrap_or_default();
             if doc.contains("#[test]")
                 || doc.contains("#[tokio::test]")
@@ -637,8 +633,8 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
         }
 
         let q2 = "MATCH (d:Dependency) WHERE d.is_dev = true RETURN d.name LIMIT 100";
-        if let Ok(mut r2) = self.conn.query(q2) {
-            while let Some(row) = r2.next() {
+        if let Ok(r2) = self.conn.query(q2) {
+            for row in r2 {
                 let dep = row.first().map(|v| v.to_string()).unwrap_or_default();
                 match dep.as_str() {
                     "jest" | "vitest" | "mocha" | "ava" | "tap" | "cypress" => {

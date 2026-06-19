@@ -63,6 +63,7 @@ fn truncate_condition(text: &str) -> String {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn collect_statements<'a>(
     node: Node<'a>,
     source: &'a [u8],

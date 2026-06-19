@@ -155,11 +155,11 @@ node_table = "Bad"
         let result = ingest_data(&conn, &schema, &data).unwrap();
         assert_eq!(result.nodes_created, 3);
 
-        let mut qr = conn
+        let qr = conn
             .query("MATCH (t:TestItem) RETURN t.id ORDER BY t.id")
             .unwrap();
         let mut ids = Vec::new();
-        while let Some(row) = qr.next() {
+        for row in qr {
             ids.push(row[0].to_string());
         }
         assert_eq!(ids.len(), 3);

@@ -244,11 +244,7 @@ pub fn extract_entities(
                 end_line: node.end_position().row as u32 + 1,
                 end_col: node.end_position().column as u32,
             };
-            let id = format!(
-                "{}::{}",
-                file,
-                route_name.replace(' ', "_").replace('/', "_")
-            );
+            let id = format!("{}::{}", file, route_name.replace([' ', '/'], "_"));
             let docstring = if handler.is_empty() {
                 Some(format!("route {} {}", method, path))
             } else {
@@ -272,12 +268,11 @@ pub fn extract_entities(
     }
 
     for sym in &mut symbols {
-        if matches!(sym.kind, SymbolKind::Function | SymbolKind::Method) {
-            if is_test_by_docstring(&sym.docstring)
-                || is_test_by_name_and_path(&sym.name, file, &sym.language)
-            {
-                sym.kind = SymbolKind::Test;
-            }
+        if matches!(sym.kind, SymbolKind::Function | SymbolKind::Method)
+            && (is_test_by_docstring(&sym.docstring)
+                || is_test_by_name_and_path(&sym.name, file, &sym.language))
+        {
+            sym.kind = SymbolKind::Test;
         }
     }
 

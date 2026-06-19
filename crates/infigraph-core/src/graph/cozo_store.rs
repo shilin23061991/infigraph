@@ -483,11 +483,7 @@ impl CozoStore {
         }
 
         let total = covered.len() + uncovered.len();
-        let pct = if total > 0 {
-            covered.len() * 100 / total
-        } else {
-            0
-        };
+        let pct = (covered.len() * 100).checked_div(total).unwrap_or(0);
 
         Ok(TestCoverage {
             covered_count: covered.len(),
@@ -575,7 +571,7 @@ impl CozoStore {
             }
         }
 
-        targets.sort_by(|a, b| b.priority_score.cmp(&a.priority_score));
+        targets.sort_by_key(|t| std::cmp::Reverse(t.priority_score));
 
         Ok(TestContext {
             framework,
@@ -639,12 +635,13 @@ impl CozoStore {
         let r = self.run(script)?;
         Ok(r.rows
             .iter()
-            .map(|row| row.iter().map(|v| dv_str(v)).collect())
+            .map(|row| row.iter().map(dv_str).collect())
             .collect())
     }
 
     // ── Write methods (for migration) ─────────────────────────────────
 
+    #[allow(clippy::type_complexity)]
     pub fn import_symbols(
         &self,
         rows: &[(
@@ -1793,7 +1790,7 @@ fn dv_u64(r: &NamedRows) -> u64 {
     r.rows
         .first()
         .and_then(|row| row.first())
-        .map(|v| dv_u64_val(v))
+        .map(dv_u64_val)
         .unwrap_or(0)
 }
 
@@ -1815,7 +1812,7 @@ fn is_testable_kind(kind: &str) -> bool {
 fn collect_strings(r: &NamedRows) -> Vec<String> {
     r.rows
         .iter()
-        .filter_map(|row| row.first().map(|v| dv_str(v)))
+        .filter_map(|row| row.first().map(dv_str))
         .collect()
 }
 

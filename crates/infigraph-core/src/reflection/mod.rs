@@ -152,19 +152,19 @@ pub fn detect_reflection_sites(store: &GraphStore, root: &Path) -> Result<Vec<Re
 
 fn extract_string_arg(after_pattern: &str) -> String {
     let trimmed = after_pattern.trim();
-    if trimmed.starts_with('"') {
-        if let Some(end) = trimmed[1..].find('"') {
-            return trimmed[1..end + 1].to_string();
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return rest[..end].to_string();
         }
     }
-    if trimmed.starts_with('\'') {
-        if let Some(end) = trimmed[1..].find('\'') {
-            return trimmed[1..end + 1].to_string();
+    if let Some(rest) = trimmed.strip_prefix('\'') {
+        if let Some(end) = rest.find('\'') {
+            return rest[..end].to_string();
         }
     }
-    if trimmed.starts_with('`') {
-        if let Some(end) = trimmed[1..].find('`') {
-            return trimmed[1..end + 1].to_string();
+    if let Some(rest) = trimmed.strip_prefix('`') {
+        if let Some(end) = rest.find('`') {
+            return rest[..end].to_string();
         }
     }
     let end = trimmed

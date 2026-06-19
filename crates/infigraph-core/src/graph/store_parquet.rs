@@ -532,7 +532,7 @@ impl GraphStore {
             if let Err(e) = conn.query(&format!("COPY {table} FROM '{}'", fwd_slash_path(&edge_pq)))
             {
                 eprintln!("warn: COPY {table} via parquet failed ({e}), falling back to UNWIND");
-                unwind_edges_from_pairs(&conn, &refs, table, src_label, dst_label);
+                unwind_edges_from_pairs(conn, &refs, table, src_label, dst_label);
             }
             let _ = std::fs::remove_file(&edge_pq);
         }
@@ -542,7 +542,7 @@ impl GraphStore {
             if pairs.is_empty() {
                 continue;
             }
-            let _ = super::schema::ensure_custom_edge_table(&conn, edge_name);
+            let _ = super::schema::ensure_custom_edge_table(conn, edge_name);
             let edge_pq = tmp.join(format!(
                 "infigraph_index_{}.parquet",
                 edge_name.to_lowercase()
@@ -561,7 +561,7 @@ impl GraphStore {
                     "warn: COPY {} via parquet failed ({e}), falling back to UNWIND",
                     edge_name
                 );
-                unwind_edges_from_pairs(&conn, &refs, edge_name, "Symbol", "Symbol");
+                unwind_edges_from_pairs(conn, &refs, edge_name, "Symbol", "Symbol");
             }
             let _ = std::fs::remove_file(&edge_pq);
         }

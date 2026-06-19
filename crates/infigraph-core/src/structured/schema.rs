@@ -170,7 +170,7 @@ pub(crate) fn format_value(col_type: &str, val: Option<&serde_json::Value>) -> S
             _ => "''".to_string(),
         },
         Some(v) => match col_type {
-            "STRING" => format!("'{}'", escape(&v.to_string().trim_matches('"').to_string())),
+            "STRING" => format!("'{}'", escape(v.to_string().trim_matches('"'))),
             "INT64" => v.as_i64().unwrap_or(0).to_string(),
             "BOOL" => v.as_bool().unwrap_or(false).to_string(),
             "DOUBLE" => v.as_f64().unwrap_or(0.0).to_string(),

@@ -42,4 +42,4 @@ fs2 = "0.4.3"
 
 [dev-dependencies]
 tree-sitter-python = "0.25"
-cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt"] }
+cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"] }

@@ -150,6 +150,7 @@ fn load_call_adjacency(conn: &kuzu::Connection<'_>) -> Result<HashMap<String, Ve
     Ok(adj)
 }
 
+#[allow(clippy::type_complexity)]
 fn find_sources_and_sinks_from_cache(
     functions: &[FuncInfo],
     cache: &SourceCache,

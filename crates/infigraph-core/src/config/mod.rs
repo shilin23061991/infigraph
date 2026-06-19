@@ -157,8 +157,8 @@ fn parse_config_kv(detail: &str, pattern: &str) -> (String, String) {
     if let Some(start) = detail.find(pattern) {
         let after = &detail[start + pattern.len()..];
         let inner = after
-            .trim_start_matches(|c: char| c == '(' || c == '"' || c == '\'')
-            .split(|c: char| c == ')' || c == '"' || c == '\'')
+            .trim_start_matches(['(', '"', '\''])
+            .split([')', '"', '\''])
             .next()
             .unwrap_or("");
         if inner.contains('=') {
@@ -182,8 +182,8 @@ fn extract_profile(detail: &str, kind: &str) -> String {
             if let Some(start) = detail.find("@Profile(") {
                 let after = &detail[start + 9..];
                 let inner = after
-                    .trim_start_matches(|c: char| c == '"' || c == '\'')
-                    .split(|c: char| c == '"' || c == '\'' || c == ')')
+                    .trim_start_matches(['"', '\''])
+                    .split(['"', '\'', ')'])
                     .next()
                     .unwrap_or("default");
                 return inner.to_string();
@@ -301,6 +301,7 @@ fn glob_walk(root: &Path) -> Result<Vec<std::path::PathBuf>> {
     Ok(files)
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn walk_config_dir(
     root: &Path,
     dir: &Path,
@@ -676,7 +677,7 @@ mod tests {
     #[test]
     fn test_parse_config_kv_spring_profile() {
         let detail = "@Profile(\"production\")";
-        let (key, value) = parse_config_kv(detail, "@Profile(");
+        let (key, _value) = parse_config_kv(detail, "@Profile(");
         assert_eq!(key, "production");
     }
 

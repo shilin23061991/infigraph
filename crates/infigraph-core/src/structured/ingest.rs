@@ -119,11 +119,8 @@ pub fn ingest_data(
                     })
                     .unwrap_or(false);
 
-                if target_exists {
-                    match conn.query(&cypher) {
-                        Ok(_) => edges_created += 1,
-                        Err(_) => {}
-                    }
+                if target_exists && conn.query(&cypher).is_ok() {
+                    edges_created += 1;
                 }
             }
         }
