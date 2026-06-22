@@ -12,3 +12,6 @@ cargo test -p infigraph-core --test write_lock_perf -- --ignored
 
 echo '+cargo test -p infigraph-mcp --test groups_watch_perf -- --ignored'
 cargo test -p infigraph-mcp --test groups_watch_perf -- --ignored
+
+echo '+cargo test -p infigraph-core --test index_perf -- --ignored'
+cargo test -p infigraph-core --test index_perf -- --ignored
