@@ -1,9 +1,9 @@
 # usearch and lbug both vendor simsimd, causing duplicate symbol errors on Linux
 # where the linker treats them as hard errors. Allow multiple definitions so the
 # linker picks the first and discards duplicates (matches macOS/Windows behavior).
-# Flag format works with both rust-lld (Rust 1.85+ default) and gcc.
+# Uses -Wl, prefix since cc is the linker driver (forwards to ld/lld via -fuse-ld).
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=--allow-multiple-definition"]
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
 
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=--allow-multiple-definition"]
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
