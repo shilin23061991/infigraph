@@ -30,6 +30,9 @@ Cargo.lock
 *.sublime-workspace
 .vim/
 
+# Distribution
+npm/
+
 # Runtime
 .infigraph/
 index.scip
