@@ -46,6 +46,17 @@ fn default_grammars_dir() -> std::path::PathBuf {
         .join("grammars")
 }
 
+/// Bundled grammars shipped next to the binary (e.g., npm tarball).
+fn bundled_grammars_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.join("grammars");
+    if dir.exists() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
 /// Load grammar plugins and register them into an existing registry.
 /// If no JVM or driver jar is available, silently skips plugin loading.
 /// Also searches `project_grammars_dir` (e.g., `<project>/grammars/`) if provided.
@@ -65,8 +76,14 @@ pub fn register_grammar_plugins(
         }
     };
 
-    // Discover plugins from both directories
+    // Discover plugins: bundled (next to binary) → user home → project-local
     let mut all_plugins = Vec::new();
+
+    if let Some(bundled) = bundled_grammars_dir() {
+        if let Ok(plugins) = discover_plugins(&bundled) {
+            all_plugins.extend(plugins);
+        }
+    }
 
     let home_dir = default_grammars_dir();
     if let Ok(plugins) = discover_plugins(&home_dir) {

@@ -20,15 +20,22 @@ pub fn open_prism(args: &Value) -> Result<Infigraph> {
 }
 
 pub fn find_infigraph_cli() -> Option<std::path::PathBuf> {
+    let bin_name = if cfg!(windows) {
+        "infigraph.exe"
+    } else {
+        "infigraph"
+    };
+
     // Check same directory as this binary first
     if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.parent()?.join("infigraph");
+        let sibling = exe.parent()?.join(bin_name);
         if sibling.exists() {
             return Some(sibling);
         }
     }
     // Fall back to PATH
-    if let Ok(out) = std::process::Command::new("which")
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    if let Ok(out) = std::process::Command::new(which_cmd)
         .arg("infigraph")
         .output()
     {
