@@ -72,6 +72,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Download driver jar
         uses: actions/download-artifact@v4
