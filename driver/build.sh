@@ -5,9 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="$SCRIPT_DIR/target"
 LIB_DIR="$SCRIPT_DIR/lib"
 ANTLR_JAR="$LIB_DIR/antlr4-complete.jar"
-JCPP_JAR="$LIB_DIR/jcpp-1.4.14.jar"
-SLF4J_API_JAR="$LIB_DIR/slf4j-api-1.7.36.jar"
-SLF4J_NOP_JAR="$LIB_DIR/slf4j-nop-1.7.36.jar"
 
 mkdir -p "$LIB_DIR"
 
@@ -17,22 +14,16 @@ if [ ! -f "$ANTLR_JAR" ]; then
     curl -sL -o "$ANTLR_JAR" "https://www.antlr.org/download/antlr-4.13.2-complete.jar"
 fi
 
-if [ ! -f "$JCPP_JAR" ]; then
-    echo "Downloading JCPP (C preprocessor)..."
-    curl -sL -o "$JCPP_JAR" "https://repo1.maven.org/maven2/org/anarres/jcpp/1.4.14/jcpp-1.4.14.jar"
+# Check mcpp is available (MSVC-compatible preprocessor, cross-platform)
+if ! command -v mcpp &> /dev/null; then
+    echo "WARNING: 'mcpp' (MSVC-compatible C preprocessor) not found in PATH."
+    echo "  macOS:    brew install mcpp"
+    echo "  Linux:    apt install mcpp"
+    echo "  Windows:  pacman -S mcpp (MSYS2)"
+    echo "  Grammars with preprocessor=c will fail at runtime without mcpp."
 fi
 
-if [ ! -f "$SLF4J_API_JAR" ]; then
-    echo "Downloading slf4j-api..."
-    curl -sL -o "$SLF4J_API_JAR" "https://repo1.maven.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar"
-fi
-
-if [ ! -f "$SLF4J_NOP_JAR" ]; then
-    echo "Downloading slf4j-nop..."
-    curl -sL -o "$SLF4J_NOP_JAR" "https://repo1.maven.org/maven2/org/slf4j/slf4j-nop/1.7.36/slf4j-nop-1.7.36.jar"
-fi
-
-CP="$ANTLR_JAR:$JCPP_JAR:$SLF4J_API_JAR:$SLF4J_NOP_JAR"
+CP="$ANTLR_JAR"
 
 # Compile
 mkdir -p "$OUT_DIR"
@@ -55,9 +46,6 @@ cd "$OUT_DIR"
 
 # Extract dependency classes
 jar xf "$ANTLR_JAR"
-jar xf "$JCPP_JAR"
-jar xf "$SLF4J_API_JAR"
-jar xf "$SLF4J_NOP_JAR"
 
 # Create manifest
 mkdir -p META-INF

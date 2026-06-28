@@ -55,6 +55,7 @@ public abstract class BaseExtractor {
         public final Set<String> seenIds = new HashSet<>();
         public final List<String> formNames = new ArrayList<>();
         public final Set<String> referencedForms = new LinkedHashSet<>();
+        public Map<Integer, ?> sourceMap;
 
         public ExtractContext(String file, String[] ruleNames, String source) {
             this.file = file;
