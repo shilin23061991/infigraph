@@ -4,6 +4,7 @@ pub mod graph;
 pub mod groups;
 pub mod helpers;
 pub mod index;
+pub mod memory_context;
 pub mod pipelines;
 pub mod search;
 pub mod session;
