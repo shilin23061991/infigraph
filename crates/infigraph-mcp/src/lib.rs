@@ -102,6 +102,9 @@ pub const MCP_TO_CLI_MAP: &[(&str, &str)] = &[
     ("group_deps", "group deps"),
     ("group_index", "group index"),
     ("group_link", "group link"),
+    ("memory_context", "memory-context"),
+    ("consolidate_memory", "consolidate-memory"),
+    ("purge_sessions", "purge-sessions"),
 ];
 
 /// MCP tools that are intentionally MCP-only (no CLI equivalent needed).
@@ -119,9 +122,7 @@ pub const MCP_ONLY_TOOLS: &[&str] = &[
     "stop_watch_docs",        // watch runs interactively in CLI
     "save_session",           // agent session management only
     "get_latest_session",     // agent session management only
-    "purge_sessions",         // agent session management only
     "search_sessions",        // agent session management only
-    "memory_context",         // agent-optimized context assembly — no CLI equivalent
     "index_confluence_pages", // programmatic — CLI has `index-confluence`
 ];
 
@@ -210,6 +211,7 @@ pub const MCP_TOOL_NAMES: &[&str] = &[
     "pipeline_compliance",
     "pipeline_query",
     "memory_context",
+    "consolidate_memory",
 ];
 
 pub fn allowed_tools_from_names() -> Vec<String> {
@@ -307,6 +309,7 @@ pub fn dispatch_tool(tool_name: &str, args: &Value) -> Result<String, anyhow::Er
         "pipeline_compliance" => tools::pipelines::tool_pipeline_compliance(args),
         "pipeline_query" => tools::pipelines::tool_pipeline_query(args),
         "memory_context" => tools::memory_context::tool_memory_context(args),
+        "consolidate_memory" => tools::session::tool_consolidate_memory(args),
         _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
     }
 }
@@ -534,7 +537,9 @@ pub fn build_tools_list() -> Vec<Value> {
             p(true,false,false,json!({"scope":{"type":"string","description":"Compliance scope to search for"},"plugin_id":{"type":"string","description":"Plugin ID to query (default: 'intuit')"}})), &["path","scope"]),
         tool_def("pipeline_query", "Query a plugin-specific pipeline table by field value. Generic escape hatch for plugin-specific queries.",
             p(true,false,false,json!({"plugin_id":{"type":"string","description":"Pipeline plugin ID (e.g. 'intuit', 'dbt')"},"field":{"type":"string","description":"Column name to search"},"value":{"type":"string","description":"Value to match (case-insensitive contains)"}})), &["path","plugin_id","field","value"]),
-        tool_def("memory_context", "LM2 output gate: Adaptive context assembly in one call. Searches code symbols (BM25+vector), sessions (semantic), and file skeletons. Ranks all results by relevance. Replaces manual search+symbol_context+search_sessions chains. Use when you need comprehensive context for a task.",
-            p(true,false,false,json!({"query":{"type":"string","description":"What context is needed (natural language)"},"file":{"type":"string","description":"Optional anchor file — boosts symbols in/near this file, includes its skeleton"},"limit":{"type":"integer","default":10,"description":"Max code results to return (default 10)"},"sources":{"type":"string","default":"code,sessions,skeleton","description":"Comma-separated source filter: code, sessions, skeleton"}})), &["path","query"]),
+        tool_def("memory_context", "LM2 output gate: Adaptive context assembly in one call. Searches code symbols (BM25+vector), sessions (semantic), and file skeletons. Ranks by relevance with L1/L2/L3 hierarchical depth. L1=anchor file symbols, L2=+callers/callees/deps, L3=full hybrid search. Auto-selects depth from query complexity. Replaces manual search+symbol_context+search_sessions chains.",
+            p(true,false,false,json!({"query":{"type":"string","description":"What context is needed (natural language)"},"file":{"type":"string","description":"Optional anchor file — boosts symbols in/near this file, includes its skeleton"},"depth":{"type":"string","enum":["auto","L1","L2","L3"],"default":"auto","description":"Retrieval depth: L1=anchor file only, L2=+callers/callees/deps, L3=full hybrid search, auto=heuristic selection"},"limit":{"type":"integer","default":10,"description":"Max code results to return (default 10)"},"sources":{"type":"string","default":"code,sessions,skeleton","description":"Comma-separated source filter: code, sessions, skeleton"}})), &["path","query"]),
+        tool_def("consolidate_memory", "LM2 memory update: Merges similar sessions into consolidated summaries. Groups by embedding similarity, creates merged session with combined decisions/constraints/assumptions. Source sessions preserved with reduced confidence. Run when session count grows large.",
+            p(true,false,false,json!({"threshold":{"type":"number","default":0.7,"description":"Similarity threshold for grouping sessions (0.0-1.0, default 0.7)"}})), &["path"]),
     ]
 }

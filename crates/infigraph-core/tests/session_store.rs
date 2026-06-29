@@ -13,6 +13,8 @@ fn make_session(id: &str, created_at: i64, updated_at: i64) -> SessionData {
         blockers: String::new(),
         created_at,
         updated_at,
+        confidence: 0.0,
+        last_accessed: 0,
     }
 }
 

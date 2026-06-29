@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -24,7 +24,64 @@ enum SourceType {
     Session = 2,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Depth {
+    L1,
+    L2,
+    L3,
+}
+
+fn select_depth(query: &str, has_anchor: bool) -> Depth {
+    let q = query.to_lowercase();
+    let l3_keywords = [
+        "refactor",
+        "architecture",
+        "design",
+        "impact",
+        "migrate",
+        "migration",
+        "restructure",
+        "rewrite",
+        "overview",
+        "all ",
+        "entire",
+        "whole",
+    ];
+    let l2_keywords = [
+        "caller",
+        "callee",
+        "uses",
+        "used by",
+        "related",
+        "depends",
+        "dependency",
+        "calls",
+        "called by",
+        "how is",
+        "how does",
+        "where is",
+        "who calls",
+    ];
+
+    for kw in &l3_keywords {
+        if q.contains(kw) {
+            return Depth::L3;
+        }
+    }
+    for kw in &l2_keywords {
+        if q.contains(kw) {
+            return Depth::L2;
+        }
+    }
+    if has_anchor {
+        Depth::L1
+    } else {
+        Depth::L2
+    }
+}
+
 pub fn tool_memory_context(args: &Value) -> Result<String> {
+    let start = std::time::Instant::now();
     let path = args
         .get("path")
         .and_then(|p| p.as_str())
@@ -43,11 +100,18 @@ pub fn tool_memory_context(args: &Value) -> Result<String> {
     let want_sessions = sources_str.contains("sessions");
     let want_skeleton = sources_str.contains("skeleton");
 
+    let depth = match args.get("depth").and_then(|d| d.as_str()) {
+        Some("L1" | "l1") => Depth::L1,
+        Some("L2" | "l2") => Depth::L2,
+        Some("L3" | "l3") => Depth::L3,
+        _ => select_depth(query, anchor_file.is_some()),
+    };
+
     let mut items: Vec<ScoredItem> = Vec::new();
     let mut always_include: Vec<ScoredItem> = Vec::new();
 
     if want_code {
-        items.extend(gather_code(args, query, anchor_file, limit)?);
+        items.extend(gather_code(args, query, anchor_file, limit, depth)?);
     }
 
     if want_sessions {
@@ -67,8 +131,66 @@ pub fn tool_memory_context(args: &Value) -> Result<String> {
         }
     }
 
+    // Apply cluster boost from prior co-occurrence data
+    if want_code {
+        apply_cluster_boost(&mut items, path);
+    }
+
     let ranked = rank_and_assemble(items, skeleton_item, always_include);
-    render_output(query, &ranked)
+
+    // Record co-occurrence for symbol clustering (Phase 5)
+    let code_ids: Vec<String> = ranked
+        .iter()
+        .filter(|i| i.source_type == SourceType::Code)
+        .map(|i| i.id.clone())
+        .collect();
+    record_cooccurrence(path, &code_ids);
+
+    let output = render_output(query, &ranked)?;
+
+    // Instrumentation: append usage log
+    let code_count = ranked
+        .iter()
+        .filter(|i| i.source_type == SourceType::Code)
+        .count();
+    let session_count = ranked
+        .iter()
+        .filter(|i| i.source_type == SourceType::Session)
+        .count();
+    let depth_str = match depth {
+        Depth::L1 => "L1",
+        Depth::L2 => "L2",
+        Depth::L3 => "L3",
+    };
+    let elapsed_ms = start.elapsed().as_millis();
+    let tokens = output.len().div_ceil(4);
+    let log_path = PathBuf::from(path)
+        .join(".infigraph")
+        .join("memory_context_log.jsonl");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(
+            f,
+            r#"{{"ts":{},"query":"{}","depth":"{}","code":{},"sessions":{},"tokens":{},"ms":{}}}"#,
+            ts,
+            query.replace('"', "'"),
+            depth_str,
+            code_count,
+            session_count,
+            tokens,
+            elapsed_ms
+        );
+    }
+
+    Ok(output)
 }
 
 fn gather_code(
@@ -76,6 +198,7 @@ fn gather_code(
     query: &str,
     anchor_file: Option<&str>,
     limit: usize,
+    mut depth: Depth,
 ) -> Result<Vec<ScoredItem>> {
     let prism = open_prism(args)?;
     let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
@@ -85,6 +208,222 @@ fn gather_code(
     let conn = store.connection()?;
     let gq = infigraph_core::graph::GraphQuery::new(&conn);
 
+    // L1 requires anchor file; escalate to L2 if missing
+    if depth == Depth::L1 && anchor_file.is_none() {
+        depth = Depth::L2;
+    }
+
+    // --- L1: anchor file symbols + recent edits + active session ---
+    if depth == Depth::L1 {
+        let anchor = anchor_file.unwrap();
+        let mut items = gather_file_symbols(&gq, &prism, anchor, 0.8)?;
+        let seen_ids: HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+
+        // Recent edits: git diff --name-only for modified files in same dir
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["diff", "--name-only", "HEAD"])
+            .current_dir(prism.root())
+            .output()
+        {
+            if output.status.success() {
+                let diff_files = String::from_utf8_lossy(&output.stdout);
+                for diff_file in diff_files.lines().take(3) {
+                    let diff_file = diff_file.trim();
+                    if diff_file == anchor || diff_file.is_empty() {
+                        continue;
+                    }
+                    for sym in gq.symbols_in_file(diff_file).unwrap_or_default() {
+                        if !seen_ids.contains(&sym.id) {
+                            items.push(ScoredItem {
+                                id: sym.id,
+                                source_type: SourceType::Code,
+                                score: 0.6,
+                                rendered_text: format!(
+                                    "#### {}::{} (recent edit)\nKind: {} | Lines: {}-{}\n\n",
+                                    diff_file, sym.name, sym.kind, sym.start_line, sym.end_line
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Auto-escalate: L1 < 3 results → L2
+        if items.len() < 3 {
+            depth = Depth::L2;
+        } else {
+            return Ok(items);
+        }
+    }
+
+    // --- L2: anchor symbols + callers/callees + file deps ---
+    if depth == Depth::L2 {
+        let mut items = Vec::new();
+        let mut seen_ids: HashSet<String> = HashSet::new();
+
+        if let Some(anchor) = anchor_file {
+            let anchor_items = gather_file_symbols(&gq, &prism, anchor, 0.8)?;
+            for item in &anchor_items {
+                seen_ids.insert(item.id.clone());
+            }
+
+            // Collect related symbol IDs via callers/callees
+            let mut related_ids: HashSet<String> = HashSet::new();
+            for item in &anchor_items {
+                for caller in gq.callers_of(&item.id).unwrap_or_default() {
+                    if !seen_ids.contains(&caller) {
+                        related_ids.insert(caller);
+                    }
+                }
+                for callee in gq.callees_of(&item.id).unwrap_or_default() {
+                    if !seen_ids.contains(&callee) {
+                        related_ids.insert(callee);
+                    }
+                }
+            }
+
+            // Collect related files via file deps
+            if let Ok(deps) = gq.get_file_deps(anchor) {
+                for imp_file in deps.imports.iter().chain(deps.imported_by.iter()) {
+                    let file_syms = gq.symbols_in_file(imp_file).unwrap_or_default();
+                    for sym in &file_syms {
+                        if !seen_ids.contains(&sym.id) {
+                            related_ids.insert(sym.id.clone());
+                        }
+                    }
+                }
+            }
+
+            items.extend(anchor_items);
+
+            // Render related symbols
+            let related_rendered = render_symbol_ids(&gq, &prism, &related_ids, 0.5)?;
+            items.extend(related_rendered);
+        } else {
+            // No anchor: use BM25-only quick search for L2
+            items = gather_l3_hybrid(query, &gq, &prism, path, limit)?;
+        }
+
+        // Auto-escalate: L2 < 5 results → L3
+        if items.len() < 5 && anchor_file.is_some() {
+            let l3_items = gather_l3_hybrid(query, &gq, &prism, path, limit)?;
+            let existing_ids: HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+            for item in l3_items {
+                if !existing_ids.contains(&item.id) {
+                    items.push(item);
+                }
+            }
+        }
+
+        items.truncate(limit);
+        return Ok(items);
+    }
+
+    // --- L3: full hybrid search (current behavior) ---
+    gather_l3_hybrid(query, &gq, &prism, path, limit)
+}
+
+fn gather_file_symbols(
+    gq: &infigraph_core::graph::GraphQuery,
+    prism: &infigraph_core::Infigraph,
+    file: &str,
+    base_score: f32,
+) -> Result<Vec<ScoredItem>> {
+    let file_symbols = gq.symbols_in_file(file).unwrap_or_default();
+    let mut items = Vec::new();
+
+    for sym in file_symbols {
+        let start_line = sym.start_line;
+        let end_line = sym.end_line;
+        let mut text = format!(
+            "#### {}::{} (anchor file)\nKind: {} | Lines: {}-{}\n",
+            file, sym.name, sym.kind, start_line, end_line
+        );
+
+        let file_path = prism.root().join(file);
+        if let Ok(source) = std::fs::read_to_string(&file_path) {
+            let lines: Vec<&str> = source.lines().collect();
+            let start = (start_line as usize).saturating_sub(1);
+            let end = (end_line as usize).min(lines.len());
+            if start < end {
+                text.push_str("```\n");
+                for (i, line) in lines[start..end].iter().enumerate() {
+                    text.push_str(&format!("{:4}  {}\n", start + i + 1, line));
+                }
+                text.push_str("```\n");
+            }
+        }
+        text.push('\n');
+
+        items.push(ScoredItem {
+            id: sym.id,
+            source_type: SourceType::Code,
+            score: base_score,
+            rendered_text: text,
+        });
+    }
+
+    Ok(items)
+}
+
+fn render_symbol_ids(
+    gq: &infigraph_core::graph::GraphQuery,
+    prism: &infigraph_core::Infigraph,
+    ids: &HashSet<String>,
+    base_score: f32,
+) -> Result<Vec<ScoredItem>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let id_list: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let mut items = Vec::new();
+
+    for id in &id_list {
+        let detail = match gq.find_symbol_by_id(id) {
+            Ok(Some(d)) => d,
+            _ => continue,
+        };
+
+        let mut text = format!(
+            "#### {}::{} (related, score: {:.3})\nKind: {} | Lines: {}-{}\n",
+            detail.file, detail.name, base_score, detail.kind, detail.start_line, detail.end_line
+        );
+
+        let file_path = prism.root().join(&detail.file);
+        if let Ok(source) = std::fs::read_to_string(&file_path) {
+            let lines: Vec<&str> = source.lines().collect();
+            let start = (detail.start_line as usize).saturating_sub(1);
+            let end = (detail.end_line as usize).min(lines.len());
+            if start < end {
+                text.push_str("```\n");
+                for (i, line) in lines[start..end].iter().enumerate() {
+                    text.push_str(&format!("{:4}  {}\n", start + i + 1, line));
+                }
+                text.push_str("```\n");
+            }
+        }
+        text.push('\n');
+
+        items.push(ScoredItem {
+            id: id.to_string(),
+            source_type: SourceType::Code,
+            score: base_score,
+            rendered_text: text,
+        });
+    }
+
+    Ok(items)
+}
+
+fn gather_l3_hybrid(
+    query: &str,
+    gq: &infigraph_core::graph::GraphQuery,
+    prism: &infigraph_core::Infigraph,
+    path: &str,
+    limit: usize,
+) -> Result<Vec<ScoredItem>> {
     let rows = gq.raw_query(
         "MATCH (s:Symbol) RETURN s.id, s.name, s.kind, s.file, s.docstring, s.start_line, s.end_line",
     )?;
@@ -239,25 +578,6 @@ fn gather_code(
         });
     }
 
-    if let Some(anchor) = anchor_file {
-        let file_symbols = gq.symbols_in_file(anchor).unwrap_or_default();
-        for sym in file_symbols {
-            if scored_items.iter().any(|s| s.id == sym.id) {
-                continue;
-            }
-            let text = format!(
-                "#### {}::{} (anchor file)\nKind: {} | Lines: {}-{}\n\n",
-                anchor, sym.name, sym.kind, sym.start_line, sym.end_line
-            );
-            scored_items.push(ScoredItem {
-                id: sym.id,
-                source_type: SourceType::Code,
-                score: 0.3,
-                rendered_text: text,
-            });
-        }
-    }
-
     Ok(scored_items)
 }
 
@@ -294,9 +614,25 @@ fn gather_sessions(path: &str, query: &str) -> Result<(Vec<ScoredItem>, Vec<Scor
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(5);
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
     for (score, session_id) in &scored {
         if let Some(session) = store.load(session_id)? {
-            let weighted_score = score * 0.7;
+            let confidence = session.compute_confidence(now);
+
+            // Skip archived sessions (confidence below threshold)
+            if session.is_archived(now) {
+                continue;
+            }
+
+            // Score = relevance * session_weight * confidence
+            let weighted_score = score * 0.7 * confidence;
+
+            // Touch session to update last_accessed
+            let _ = store.touch_session(session_id);
 
             let created = format_epoch(session.created_at);
             let updated = format_epoch(session.updated_at);
@@ -307,8 +643,8 @@ fn gather_sessions(path: &str, query: &str) -> Result<(Vec<ScoredItem>, Vec<Scor
             };
 
             let mut text = format!(
-                "#### {}{} (relevance: {:.3})\n",
-                session.id, name_label, weighted_score
+                "#### {}{} (relevance: {:.3}, confidence: {:.2})\n",
+                session.id, name_label, weighted_score, confidence
             );
             text.push_str(&format!("Created: {} | Updated: {}\n", created, updated));
 
@@ -480,6 +816,188 @@ fn render_output(query: &str, items: &[ScoredItem]) -> Result<String> {
     }
 
     Ok(out)
+}
+
+/// Co-occurrence matrix: tracks how often symbol pairs appear together in memory_context results.
+/// Stored as JSON: { "sym_a\tsym_b": count, ... } where sym_a < sym_b lexicographically.
+fn cooccurrence_path(path: &str) -> PathBuf {
+    PathBuf::from(path)
+        .join(".infigraph")
+        .join("symbol_cooccurrence.json")
+}
+
+fn cluster_path(path: &str) -> PathBuf {
+    PathBuf::from(path)
+        .join(".infigraph")
+        .join("symbol_clusters.json")
+}
+
+fn record_cooccurrence(path: &str, symbol_ids: &[String]) {
+    if symbol_ids.len() < 2 {
+        return;
+    }
+    let co_path = cooccurrence_path(path);
+    let mut counts: HashMap<String, u32> = if co_path.exists() {
+        std::fs::read_to_string(&co_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    let ids: Vec<&str> = symbol_ids.iter().map(|s| s.as_str()).take(10).collect();
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            let (a, b) = if ids[i] < ids[j] {
+                (ids[i], ids[j])
+            } else {
+                (ids[j], ids[i])
+            };
+            let key = format!("{}\t{}", a, b);
+            *counts.entry(key).or_insert(0) += 1;
+        }
+    }
+
+    if let Ok(json) = serde_json::to_string(&counts) {
+        let _ = std::fs::write(&co_path, json);
+    }
+}
+
+/// Build clusters from co-occurrence data using union-find.
+/// Pairs with count >= min_cooccurrence get merged.
+pub fn build_symbol_clusters(
+    path: &str,
+    min_cooccurrence: u32,
+) -> Result<HashMap<String, Vec<String>>> {
+    let co_path = cooccurrence_path(path);
+    if !co_path.exists() {
+        return Ok(HashMap::new());
+    }
+
+    let counts: HashMap<String, u32> = serde_json::from_str(&std::fs::read_to_string(&co_path)?)?;
+
+    let mut all_ids: Vec<String> = Vec::new();
+    let mut id_index: HashMap<String, usize> = HashMap::new();
+
+    for (key, &count) in &counts {
+        if count < min_cooccurrence {
+            continue;
+        }
+        let parts: Vec<&str> = key.split('\t').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        for &part in &parts {
+            if !id_index.contains_key(part) {
+                id_index.insert(part.to_string(), all_ids.len());
+                all_ids.push(part.to_string());
+            }
+        }
+    }
+
+    if all_ids.len() < 2 {
+        return Ok(HashMap::new());
+    }
+
+    let n = all_ids.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            parent[i] = find(parent, parent[i]);
+        }
+        parent[i]
+    }
+
+    for (key, &count) in &counts {
+        if count < min_cooccurrence {
+            continue;
+        }
+        let parts: Vec<&str> = key.split('\t').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        if let (Some(&a), Some(&b)) = (id_index.get(parts[0]), id_index.get(parts[1])) {
+            let pa = find(&mut parent, a);
+            let pb = find(&mut parent, b);
+            if pa != pb {
+                parent[pa] = pb;
+            }
+        }
+    }
+
+    let mut raw_clusters: HashMap<usize, Vec<String>> = HashMap::new();
+    for (i, id) in all_ids.iter().enumerate().take(n) {
+        let root = find(&mut parent, i);
+        raw_clusters.entry(root).or_default().push(id.clone());
+    }
+
+    // Only keep clusters with 2+ members, key by first member
+    let mut clusters: HashMap<String, Vec<String>> = HashMap::new();
+    for (_root, members) in raw_clusters {
+        if members.len() >= 2 {
+            let key = members[0].clone();
+            clusters.insert(key, members);
+        }
+    }
+
+    // Persist clusters
+    let cl_path = cluster_path(path);
+    if let Ok(json) = serde_json::to_string(&clusters) {
+        let _ = std::fs::write(&cl_path, json);
+    }
+
+    Ok(clusters)
+}
+
+/// Load persisted clusters. Returns map: symbol_id → all peers in its cluster.
+fn load_cluster_peers(path: &str) -> HashMap<String, Vec<String>> {
+    let cl_path = cluster_path(path);
+    if !cl_path.exists() {
+        return HashMap::new();
+    }
+
+    let clusters: HashMap<String, Vec<String>> = std::fs::read_to_string(&cl_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let mut peer_map: HashMap<String, Vec<String>> = HashMap::new();
+    for members in clusters.values() {
+        for member in members {
+            peer_map.insert(member.clone(), members.clone());
+        }
+    }
+    peer_map
+}
+
+/// Boost scores for symbols that are cluster peers of already-matched symbols.
+fn apply_cluster_boost(items: &mut [ScoredItem], path: &str) {
+    let peer_map = load_cluster_peers(path);
+    if peer_map.is_empty() {
+        return;
+    }
+
+    let matched_ids: HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+
+    let mut peer_ids: HashSet<String> = HashSet::new();
+    for id in &matched_ids {
+        if let Some(peers) = peer_map.get(id) {
+            for peer in peers {
+                if !matched_ids.contains(peer) {
+                    peer_ids.insert(peer.clone());
+                }
+            }
+        }
+    }
+
+    // Boost existing items that are peers
+    for item in items.iter_mut() {
+        if peer_ids.contains(&item.id) {
+            item.score = (item.score + 0.1).min(1.0);
+        }
+    }
 }
 
 fn format_epoch(epoch: i64) -> String {

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use infigraph_core::Infigraph;
 use infigraph_languages::bundled_registry;
+use serde_json::json;
 
 pub(crate) fn cmd_stats(root: &Path) -> Result<()> {
     let registry = bundled_registry()?;
@@ -635,5 +636,51 @@ pub(crate) fn cmd_delete_project(root: &Path) -> Result<()> {
             to_remove.join(", ")
         );
     }
+    Ok(())
+}
+
+pub(crate) fn cmd_memory_context(
+    root: &Path,
+    query: &str,
+    file: Option<&str>,
+    depth: &str,
+    sources: &str,
+    limit: usize,
+) -> Result<()> {
+    let path = root.to_string_lossy();
+    let mut args = json!({
+        "path": path.as_ref(),
+        "query": query,
+        "depth": depth,
+        "sources": sources,
+        "limit": limit,
+    });
+    if let Some(f) = file {
+        args["file"] = json!(f);
+    }
+    let result = infigraph_mcp::tools::memory_context::tool_memory_context(&args)?;
+    println!("{result}");
+    Ok(())
+}
+
+pub(crate) fn cmd_consolidate_memory(root: &Path, threshold: f64) -> Result<()> {
+    let path = root.to_string_lossy();
+    let args = json!({
+        "path": path.as_ref(),
+        "threshold": threshold,
+    });
+    let result = infigraph_mcp::tools::session::tool_consolidate_memory(&args)?;
+    println!("{result}");
+    Ok(())
+}
+
+pub(crate) fn cmd_purge_sessions(root: &Path, days: u32) -> Result<()> {
+    let path = root.to_string_lossy();
+    let args = json!({
+        "path": path.as_ref(),
+        "older_than_days": days,
+    });
+    let result = infigraph_mcp::tools::session::tool_purge_sessions(&args)?;
+    println!("{result}");
     Ok(())
 }

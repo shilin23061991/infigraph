@@ -24,6 +24,39 @@ pub struct SessionData {
     pub created_at: i64,
     #[serde(default)]
     pub updated_at: i64,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default)]
+    pub last_accessed: i64,
+}
+
+const DECAY_PER_WEEK: f32 = 0.05;
+const ARCHIVE_THRESHOLD: f32 = 0.3;
+const INITIAL_CONFIDENCE: f32 = 0.7;
+
+impl SessionData {
+    pub fn compute_confidence(&self, now_epoch: i64) -> f32 {
+        let base = if self.confidence > 0.0 {
+            self.confidence
+        } else {
+            INITIAL_CONFIDENCE
+        };
+        let last = if self.last_accessed > 0 {
+            self.last_accessed
+        } else {
+            self.updated_at.max(self.created_at)
+        };
+        let weeks_elapsed = ((now_epoch - last) as f32 / 604800.0).max(0.0);
+        (base - DECAY_PER_WEEK * weeks_elapsed).clamp(0.0, 1.0)
+    }
+
+    pub fn is_archived(&self, now_epoch: i64) -> bool {
+        self.compute_confidence(now_epoch) < ARCHIVE_THRESHOLD
+    }
+
+    pub fn touch(&mut self, now_epoch: i64) {
+        self.last_accessed = now_epoch;
+    }
 }
 
 pub struct SessionStore {
@@ -79,6 +112,38 @@ impl SessionStore {
         }
         sessions.sort_by_key(|s| std::cmp::Reverse(s.created_at));
         Ok(sessions)
+    }
+
+    pub fn list_active(&self, now_epoch: i64) -> Result<Vec<SessionData>> {
+        let all = self.list_all()?;
+        Ok(all
+            .into_iter()
+            .filter(|s| !s.is_archived(now_epoch))
+            .collect())
+    }
+
+    pub fn purge_expired(&self, now_epoch: i64) -> Result<Vec<String>> {
+        let all = self.list_all()?;
+        let mut deleted = Vec::new();
+        for session in &all {
+            if session.compute_confidence(now_epoch) < 0.1 {
+                self.delete(&session.id)?;
+                deleted.push(session.id.clone());
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub fn touch_session(&self, session_id: &str) -> Result<()> {
+        if let Some(mut session) = self.load(session_id)? {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            session.touch(now);
+            self.save(&session)?;
+        }
+        Ok(())
     }
 
     pub fn list_recent(&self, limit: usize) -> Result<Vec<SessionData>> {
@@ -148,6 +213,8 @@ impl SessionStore {
                 blockers: get(9),
                 created_at: created,
                 updated_at: updated,
+                confidence: 0.0,
+                last_accessed: 0,
             });
         }
         collected
@@ -208,6 +275,8 @@ mod tests {
             blockers: String::new(),
             created_at,
             updated_at,
+            confidence: 0.0,
+            last_accessed: 0,
         }
     }
 
@@ -300,5 +369,95 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_dir(dir.path()).unwrap();
         assert!(store.load("session_nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_confidence_initial_default() {
+        let s = make_session("s1", 1000, 1000);
+        // confidence=0.0 → uses INITIAL_CONFIDENCE (0.7)
+        let conf = s.compute_confidence(1000);
+        assert!(
+            (conf - 0.7).abs() < 0.01,
+            "initial confidence should be 0.7, got {conf}"
+        );
+    }
+
+    #[test]
+    fn test_confidence_decays_over_weeks() {
+        let s = make_session("s1", 1000, 1000);
+        let one_week = 604800;
+        // After 1 week: 0.7 - 0.05 = 0.65
+        let conf = s.compute_confidence(1000 + one_week);
+        assert!((conf - 0.65).abs() < 0.01, "after 1 week: {conf}");
+        // After 4 weeks: 0.7 - 0.20 = 0.50
+        let conf = s.compute_confidence(1000 + 4 * one_week);
+        assert!((conf - 0.50).abs() < 0.01, "after 4 weeks: {conf}");
+        // After 8 weeks: 0.7 - 0.40 = 0.30
+        let conf = s.compute_confidence(1000 + 8 * one_week);
+        assert!((conf - 0.30).abs() < 0.01, "after 8 weeks: {conf}");
+    }
+
+    #[test]
+    fn test_confidence_archived_threshold() {
+        let s = make_session("s1", 1000, 1000);
+        let one_week = 604800;
+        // After 7 weeks: 0.35 → not archived
+        assert!(!s.is_archived(1000 + 7 * one_week));
+        // After 9 weeks: 0.25 → archived
+        assert!(s.is_archived(1000 + 9 * one_week));
+    }
+
+    #[test]
+    fn test_confidence_clamps_to_zero() {
+        let s = make_session("s1", 1000, 1000);
+        let one_week = 604800;
+        // After 100 weeks: should clamp to 0.0, not go negative
+        let conf = s.compute_confidence(1000 + 100 * one_week);
+        assert!(conf >= 0.0, "confidence should not go negative: {conf}");
+        assert!(conf == 0.0, "confidence should be 0.0: {conf}");
+    }
+
+    #[test]
+    fn test_confidence_explicit_value_used() {
+        let mut s = make_session("s1", 1000, 1000);
+        s.confidence = 1.0; // user-confirmed
+        s.last_accessed = 1000;
+        let one_week = 604800;
+        // After 2 weeks: 1.0 - 0.10 = 0.90
+        let conf = s.compute_confidence(1000 + 2 * one_week);
+        assert!((conf - 0.90).abs() < 0.01, "explicit confidence: {conf}");
+    }
+
+    #[test]
+    fn test_touch_updates_last_accessed() {
+        let mut s = make_session("s1", 1000, 1000);
+        assert_eq!(s.last_accessed, 0);
+        s.touch(5000);
+        assert_eq!(s.last_accessed, 5000);
+        // Confidence now computed from last_accessed
+        let conf = s.compute_confidence(5000);
+        assert!((conf - 0.7).abs() < 0.01, "after touch: {conf}");
+    }
+
+    #[test]
+    fn test_list_active_filters_archived() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_dir(dir.path()).unwrap();
+        let one_week = 604800i64;
+        let now = 100 * one_week;
+
+        // Recent session — should be active
+        let mut recent = make_session("session_recent", now - one_week, now - one_week);
+        recent.last_accessed = now - one_week;
+        store.save(&recent).unwrap();
+
+        // Old session — should be archived (9+ weeks old, conf < 0.3)
+        let mut old = make_session("session_old", now - 10 * one_week, now - 10 * one_week);
+        old.last_accessed = now - 10 * one_week;
+        store.save(&old).unwrap();
+
+        let active = store.list_active(now).unwrap();
+        assert_eq!(active.len(), 1, "should filter out archived session");
+        assert_eq!(active[0].id, "session_recent");
     }
 }

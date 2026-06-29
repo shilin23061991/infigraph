@@ -64,6 +64,46 @@ pub fn session_date_id() -> String {
     format!("session_{y:04}-{:02}-{:02}", mo + 1, remaining + 1)
 }
 
+fn score_session_value(
+    decisions: &str,
+    constraints: &str,
+    assumptions: &str,
+    blockers: &str,
+) -> f32 {
+    let high_value_markers = [
+        "invalidates-if",
+        "invalidate",
+        "if wrong",
+        "do not retry",
+        "failed because",
+        "tried:",
+        "blocked",
+        "security",
+        "compliance",
+    ];
+    let has_high_value = [decisions, constraints, assumptions, blockers]
+        .iter()
+        .any(|field| {
+            let lower = field.to_lowercase();
+            high_value_markers.iter().any(|m| lower.contains(m))
+        });
+
+    if has_high_value {
+        return 0.9;
+    }
+
+    if !constraints.is_empty() || !blockers.is_empty() {
+        return 0.85;
+    }
+
+    if !decisions.is_empty() || !assumptions.is_empty() {
+        return 0.7;
+    }
+
+    // Summary-only session — lower initial confidence
+    0.5
+}
+
 pub fn tool_save_session(args: &Value) -> Result<String> {
     let store = open_session_store(args)?;
     let path = args
@@ -141,6 +181,8 @@ pub fn tool_save_session(args: &Value) -> Result<String> {
             blockers: blockers.to_string(),
             created_at: existing.created_at,
             updated_at: now,
+            confidence: 0.9_f32.max(existing.confidence),
+            last_accessed: now,
         }
     } else {
         SessionData {
@@ -155,6 +197,8 @@ pub fn tool_save_session(args: &Value) -> Result<String> {
             blockers: blockers.to_string(),
             created_at: now,
             updated_at: now,
+            confidence: score_session_value(decisions, constraints, assumptions, blockers),
+            last_accessed: now,
         }
     };
 
@@ -187,13 +231,28 @@ pub fn tool_save_session(args: &Value) -> Result<String> {
     emb_store.push((session_id.clone(), vec));
     embed::save_embeddings(&emb_path, &emb_store)?;
 
-    if session_name.is_empty() {
-        Ok(format!("Session saved: {session_id}"))
+    // Auto-trigger consolidation when session count > 50
+    let session_count = emb_store.len();
+    let auto_consolidated = if session_count > 50 {
+        let consolidate_args = serde_json::json!({ "path": path, "threshold": 0.7 });
+        tool_consolidate_memory(&consolidate_args).ok()
     } else {
-        Ok(format!(
-            "Session saved: {session_id} (name: {session_name})"
-        ))
+        None
+    };
+
+    let mut result = if session_name.is_empty() {
+        format!("Session saved: {session_id}")
+    } else {
+        format!("Session saved: {session_id} (name: {session_name})")
+    };
+
+    if let Some(consolidation_msg) = auto_consolidated {
+        result.push_str(&format!(
+            "\n\n**Auto-consolidation triggered ({session_count} sessions):**\n{consolidation_msg}"
+        ));
     }
+
+    Ok(result)
 }
 
 pub const CLUSTER_GAP_SECS: i64 = 72 * 3600;
@@ -233,13 +292,22 @@ pub fn format_session_output(
     } else {
         out.push_str(&format!("## Session {} of {}\n\n", idx + 1, total));
     }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let confidence = session.compute_confidence(now);
+
     if !session.name.is_empty() {
         out.push_str(&format!(
-            "**Session:** {} (name: **{}**)\n\n",
-            session.id, session.name
+            "**Session:** {} (name: **{}**, confidence: {:.2})\n\n",
+            session.id, session.name, confidence
         ));
     } else {
-        out.push_str(&format!("**Session:** {}\n\n", session.id));
+        out.push_str(&format!(
+            "**Session:** {} (confidence: {:.2})\n\n",
+            session.id, confidence
+        ));
     }
     if !session.summary.is_empty() {
         out.push_str(&format!("**Summary:** {}\n\n", session.summary));
@@ -502,14 +570,30 @@ pub fn tool_search_sessions(args: &Value) -> Result<String> {
 
     let mut out = format!("## Session Search: \"{query}\"\n\n");
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
     for (score, session_id) in &scored {
         if let Some(session) = store.load(session_id)? {
+            let confidence = session.compute_confidence(now);
+
+            if session.is_archived(now) {
+                continue;
+            }
+
+            let _ = store.touch_session(session_id);
+
             let header = if session.name.is_empty() {
-                format!("### {} (relevance: {:.3})\n\n", session.id, score)
+                format!(
+                    "### {} (relevance: {:.3}, confidence: {:.2})\n\n",
+                    session.id, score, confidence
+                )
             } else {
                 format!(
-                    "### {} — \"{}\" (relevance: {:.3})\n\n",
-                    session.id, session.name, score
+                    "### {} — \"{}\" (relevance: {:.3}, confidence: {:.2})\n\n",
+                    session.id, session.name, score, confidence
                 )
             };
             out.push_str(&header);
@@ -542,6 +626,233 @@ pub fn tool_search_sessions(args: &Value) -> Result<String> {
     Ok(out)
 }
 
+pub fn tool_consolidate_memory(args: &Value) -> Result<String> {
+    let store = open_session_store(args)?;
+    let path = args
+        .get("path")
+        .and_then(|p| p.as_str())
+        .context("missing 'path'")?;
+    let similarity_threshold = args
+        .get("threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.7) as f32;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Purge expired sessions (confidence < 0.1)
+    let purged = store.purge_expired(now)?;
+
+    let root = PathBuf::from(path);
+    let emb_path = root
+        .join(".infigraph")
+        .join("sessions")
+        .join("embeddings.bin");
+
+    if !emb_path.exists() {
+        let msg = if purged.is_empty() {
+            "No session embeddings found. Nothing to consolidate.".to_string()
+        } else {
+            format!(
+                "Purged {} expired sessions. No embeddings to consolidate.",
+                purged.len()
+            )
+        };
+        return Ok(msg);
+    }
+
+    let emb_store = embed::load_embeddings(&emb_path)?;
+    if emb_store.len() < 2 {
+        return Ok("Fewer than 2 sessions — nothing to consolidate.".to_string());
+    }
+
+    // Load all active sessions with embeddings
+    let mut sessions_with_emb: Vec<(SessionData, Vec<f32>)> = Vec::new();
+    for (id, emb) in &emb_store {
+        if let Some(session) = store.load(id)? {
+            if !session.is_archived(now) && !id.starts_with("consolidated_") {
+                sessions_with_emb.push((session, emb.clone()));
+            }
+        }
+    }
+
+    if sessions_with_emb.len() < 2 {
+        return Ok("Fewer than 2 active sessions — nothing to consolidate.".to_string());
+    }
+
+    // Union-find clustering by similarity
+    let n = sessions_with_emb.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            parent[i] = find(parent, parent[i]);
+        }
+        parent[i]
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let sim = embed::cosine_similarity(&sessions_with_emb[i].1, &sessions_with_emb[j].1);
+            if sim >= similarity_threshold {
+                let pi = find(&mut parent, i);
+                let pj = find(&mut parent, j);
+                if pi != pj {
+                    parent[pi] = pj;
+                }
+            }
+        }
+    }
+
+    // Build clusters
+    let mut clusters: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    for i in 0..n {
+        let root_idx = find(&mut parent, i);
+        clusters.entry(root_idx).or_default().push(i);
+    }
+
+    let mut consolidated_count = 0;
+    let mut out = String::from("## Memory Consolidation\n\n");
+
+    for members in clusters.values() {
+        if members.len() < 2 {
+            continue;
+        }
+
+        // Merge sessions in cluster
+        let mut merged_summary = String::new();
+        let mut merged_decisions = String::new();
+        let mut merged_constraints = String::new();
+        let mut merged_assumptions = String::new();
+        let mut merged_blockers = String::new();
+        let mut merged_files: Vec<String> = Vec::new();
+        let mut source_ids: Vec<String> = Vec::new();
+        let mut earliest_created = i64::MAX;
+        let mut latest_updated = 0i64;
+
+        for &idx in members {
+            let session = &sessions_with_emb[idx].0;
+            source_ids.push(session.id.clone());
+
+            if !session.summary.is_empty() {
+                if !merged_summary.is_empty() {
+                    merged_summary.push_str(" | ");
+                }
+                merged_summary.push_str(&session.summary);
+            }
+            if !session.decisions.is_empty() {
+                if !merged_decisions.is_empty() {
+                    merged_decisions.push_str(" | ");
+                }
+                merged_decisions.push_str(&session.decisions);
+            }
+            if !session.constraints.is_empty() {
+                if !merged_constraints.is_empty() {
+                    merged_constraints.push_str(" | ");
+                }
+                merged_constraints.push_str(&session.constraints);
+            }
+            if !session.assumptions.is_empty() {
+                if !merged_assumptions.is_empty() {
+                    merged_assumptions.push_str(" | ");
+                }
+                merged_assumptions.push_str(&session.assumptions);
+            }
+            if !session.blockers.is_empty() {
+                if !merged_blockers.is_empty() {
+                    merged_blockers.push_str(" | ");
+                }
+                merged_blockers.push_str(&session.blockers);
+            }
+            for f in session.files_touched.split(',').map(|s| s.trim()) {
+                if !f.is_empty() && !merged_files.contains(&f.to_string()) {
+                    merged_files.push(f.to_string());
+                }
+            }
+            earliest_created = earliest_created.min(session.created_at);
+            latest_updated = latest_updated.max(session.updated_at);
+        }
+
+        let consolidated_id = format!("consolidated_{}", earliest_created);
+
+        let consolidated = SessionData {
+            id: consolidated_id.clone(),
+            name: format!("Consolidated ({} sessions)", members.len()),
+            summary: merged_summary,
+            pending_tasks: String::new(),
+            decisions: merged_decisions,
+            files_touched: merged_files.join(", "),
+            constraints: merged_constraints,
+            assumptions: merged_assumptions,
+            blockers: merged_blockers,
+            created_at: earliest_created,
+            updated_at: now,
+            confidence: 0.9,
+            last_accessed: now,
+        };
+
+        store.save(&consolidated)?;
+
+        // Re-embed consolidated session
+        let embed_text = format!(
+            "{} {} {} {}",
+            consolidated.summary,
+            consolidated.decisions,
+            consolidated.constraints,
+            consolidated.assumptions
+        );
+        let embedder = embed::code_embedder();
+        if let Ok(emb_vec) = embedder.embed(&embed_text) {
+            let mut all_embs = embed::load_embeddings(&emb_path)?;
+            all_embs.push((consolidated_id.clone(), emb_vec));
+            embed::save_embeddings(&emb_path, &all_embs)?;
+        }
+
+        // Lower confidence of source sessions (superseded, not deleted)
+        for &idx in members {
+            let mut session = sessions_with_emb[idx].0.clone();
+            session.confidence = (session.compute_confidence(now) * 0.5).max(0.3);
+            store.save(&session)?;
+        }
+
+        out.push_str(&format!(
+            "### {} — merged {} sessions\n",
+            consolidated_id,
+            members.len()
+        ));
+        out.push_str(&format!("Sources: {}\n\n", source_ids.join(", ")));
+        consolidated_count += 1;
+    }
+
+    if consolidated_count == 0 {
+        out.push_str(
+            "No clusters found above similarity threshold. Sessions are already distinct.\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "\n**Created {} consolidated session(s).** Source sessions preserved with reduced confidence.\n",
+            consolidated_count
+        ));
+    }
+
+    // Build symbol clusters from co-occurrence data
+    match super::memory_context::build_symbol_clusters(path, 3) {
+        Ok(clusters) if !clusters.is_empty() => {
+            out.push_str(&format!(
+                "\n**Symbol clusters:** {} cluster(s) built from co-retrieval patterns.\n",
+                clusters.len()
+            ));
+        }
+        Ok(_) => {}
+        Err(_) => {}
+    }
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,6 +871,8 @@ mod tests {
             blockers: String::new(),
             created_at,
             updated_at,
+            confidence: 0.0,
+            last_accessed: 0,
         }
     }
 

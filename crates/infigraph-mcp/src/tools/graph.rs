@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use infigraph_core::embed;
+use infigraph_core::graph::SessionStore;
 use infigraph_core::multi::Registry;
 use infigraph_languages::bundled_registry;
 
@@ -289,6 +291,10 @@ pub fn tool_symbol_context(args: &Value) -> Result<String> {
             out.push_str(&format!("    {}\n", c));
         }
     }
+
+    // Auto-inject relevant session context (LM2 skip connection)
+    let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
+    auto_inject_session_context(path, &detail.name, &mut out);
 
     Ok(out)
 }
@@ -651,7 +657,107 @@ pub fn tool_get_doc_context(args: &Value) -> Result<String> {
         }
     }
 
+    // Auto-inject relevant session context (LM2 skip connection)
+    let path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
+    auto_inject_session_context(path, &detail.name, &mut out);
+
     Ok(out)
+}
+
+fn auto_inject_session_context(path: &str, symbol_name: &str, main_output: &mut String) {
+    let root = PathBuf::from(path);
+    let emb_path = root
+        .join(".infigraph")
+        .join("sessions")
+        .join("embeddings.bin");
+
+    if !emb_path.exists() {
+        return;
+    }
+
+    let emb_store = match embed::load_embeddings(&emb_path) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    let embedder = embed::code_embedder();
+    let query_vec = match embedder.embed(symbol_name) {
+        Ok(v) if !v.is_empty() => v,
+        _ => return,
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let store = match SessionStore::open(&root) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let mut scored: Vec<(f32, String)> = emb_store
+        .iter()
+        .map(|(id, vec)| (embed::cosine_similarity(&query_vec, vec), id.clone()))
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let max_inject_len = main_output.len() / 5; // 20% budget
+    let mut injected_len = 0;
+
+    for (score, session_id) in &scored {
+        if *score < 0.7 {
+            break;
+        }
+
+        let session = match store.load(session_id) {
+            Ok(Some(s)) => s,
+            _ => continue,
+        };
+
+        let confidence = session.compute_confidence(now);
+        if confidence < 0.5 {
+            continue;
+        }
+
+        let mut snippet = String::new();
+        if !session.decisions.is_empty() {
+            snippet.push_str(&format!("Decisions: {}\n", session.decisions));
+        }
+        if !session.constraints.is_empty() {
+            snippet.push_str(&format!("Constraints: {}\n", session.constraints));
+        }
+        if !session.summary.is_empty() && snippet.is_empty() {
+            snippet.push_str(&format!("Summary: {}\n", session.summary));
+        }
+
+        if snippet.is_empty() {
+            continue;
+        }
+
+        if injected_len + snippet.len() > max_inject_len {
+            break;
+        }
+
+        if injected_len == 0 {
+            main_output.push_str("\n**Prior context:**\n");
+        }
+
+        let label = if session.name.is_empty() {
+            session.id.clone()
+        } else {
+            format!("{} ({})", session.name, session.id)
+        };
+        main_output.push_str(&format!(
+            "  [{}] (confidence: {:.2}): {}\n",
+            label,
+            confidence,
+            snippet.trim()
+        ));
+        injected_len += snippet.len();
+
+        let _ = store.touch_session(session_id);
+    }
 }
 
 pub fn tool_list_files(args: &Value) -> Result<String> {

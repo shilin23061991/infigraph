@@ -620,6 +620,40 @@ enum Commands {
         #[command(subcommand)]
         action: PipelineAction,
     },
+
+    /// LM2 adaptive context: ranked code + sessions + skeleton in one query
+    #[command(alias = "mc")]
+    MemoryContext {
+        /// Natural language query
+        query: String,
+        /// Anchor file (boosts nearby symbols)
+        #[arg(short, long)]
+        file: Option<String>,
+        /// Depth tier: auto, L1, L2, L3
+        #[arg(short, long, default_value = "auto")]
+        depth: String,
+        /// Sources to include: code,sessions,skeleton
+        #[arg(short, long, default_value = "code,sessions,skeleton")]
+        sources: String,
+        /// Max code results
+        #[arg(short = 'n', long, default_value = "10")]
+        limit: usize,
+    },
+
+    /// Consolidate similar sessions + build symbol clusters + purge expired
+    #[command(alias = "consolidate")]
+    ConsolidateMemory {
+        /// Cosine similarity threshold for merging (0.0-1.0)
+        #[arg(short, long, default_value = "0.7")]
+        threshold: f64,
+    },
+
+    /// Delete sessions older than N days
+    PurgeSessions {
+        /// Delete sessions older than this many days
+        #[arg(short, long, default_value = "30")]
+        days: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -945,6 +979,15 @@ fn run(command: Commands, root: &Path) -> Result<()> {
             cmd_generate_test_context(root, file.as_deref(), limit)
         }
         Commands::Delete => cmd_delete_project(root),
+        Commands::MemoryContext {
+            query,
+            file,
+            depth,
+            sources,
+            limit,
+        } => cmd_memory_context(root, &query, file.as_deref(), &depth, &sources, limit),
+        Commands::ConsolidateMemory { threshold } => cmd_consolidate_memory(root, threshold),
+        Commands::PurgeSessions { days } => cmd_purge_sessions(root, days),
         Commands::Pipeline { action } => match action {
             PipelineAction::Plugins => cmd_pipeline_plugins(root),
             PipelineAction::Deps => cmd_pipeline_deps(root),
