@@ -45,6 +45,21 @@ public class GrammarDriver {
         }
     }
 
+    private static void applySourceMap(BaseExtractor.ExtractContext ctx, Map<Integer, SourceMapping> sourceMap) {
+        if (sourceMap == null || sourceMap.isEmpty()) return;
+        Map<String, Integer> fileIndex = new HashMap<>();
+        List<String> fileList = new ArrayList<>();
+        TreeMap<Integer, int[]> compact = new TreeMap<>();
+        for (Map.Entry<Integer, SourceMapping> e : sourceMap.entrySet()) {
+            String f = e.getValue().file;
+            Integer idx = fileIndex.get(f);
+            if (idx == null) { idx = fileList.size(); fileIndex.put(f, idx); fileList.add(f); }
+            compact.put(e.getKey(), new int[]{idx, e.getValue().originalLine});
+        }
+        ctx.sourceMap = compact;
+        ctx.sourceMapFiles = fileList.toArray(new String[0]);
+    }
+
     private final Map<String, LoadedGrammar> grammars = new HashMap<>();
     private final PrintWriter out;
 
@@ -288,7 +303,7 @@ public class GrammarDriver {
                     }
                     BaseExtractor.ExtractContext ctx = new BaseExtractor.ExtractContext(
                         filePath, ruleNames, source);
-                    if (sourceMap != null) ctx.sourceMap = sourceMap;
+                    applySourceMap(ctx, sourceMap);
                     threadExt.init(ctx, source);
                     threadExt.extract(tree, tokens, ctx);
 
@@ -394,7 +409,17 @@ public class GrammarDriver {
         loaded.parser = parserGrammar;
         loaded.entryRule = entryRule;
         loaded.ruleNames = parserGrammar.getRuleNames();
+
+        String fallbackStr = req.getString("fallback_entry_rules");
+        if (fallbackStr != null && !fallbackStr.isEmpty()) {
+            loaded.fallbackEntryRules = fallbackStr.split(",\\s*");
+        }
+
         String ppCmd = req.getString("preprocessor_cmd");
+        if (ppCmd == null || ppCmd.isEmpty()) {
+            String pp = req.getString("preprocessor");
+            if ("c".equals(pp)) ppCmd = "mcpp -W0";
+        }
         if (ppCmd != null && !ppCmd.isEmpty()) {
             PreprocessorConfig pp = new PreprocessorConfig();
             pp.cmd = ppCmd.split("\\s+");
@@ -562,10 +587,32 @@ public class GrammarDriver {
         int startRule = loaded.parser.getRule(loaded.entryRule).index;
         ParseTree tree = parser.parse(startRule);
 
-        BaseExtractor.ExtractContext ctx = new BaseExtractor.ExtractContext(file, loaded.ruleNames, source);
-        if (sourceMap != null) {
-            ctx.sourceMap = sourceMap;
+        if (parserErrors.count > 0 && loaded.fallbackEntryRules != null) {
+            for (String fbRule : loaded.fallbackEntryRules) {
+                int fb = loaded.parser.getRule(fbRule).index;
+                LexerInterpreter fbLexer = loaded.lexer.createLexerInterpreter(
+                    CharStreams.fromString(source));
+                fbLexer.removeErrorListeners();
+                CountingErrorListener fbLexerErrors = new CountingErrorListener();
+                fbLexer.addErrorListener(fbLexerErrors);
+                CommonTokenStream fbTokens = new CommonTokenStream(fbLexer);
+                ParserInterpreter fbParser = loaded.parser.createParserInterpreter(fbTokens);
+                fbParser.removeErrorListeners();
+                CountingErrorListener fbParserErrors = new CountingErrorListener();
+                fbParser.addErrorListener(fbParserErrors);
+                ParseTree fbTree = fbParser.parse(fb);
+                if (fbParserErrors.count < parserErrors.count) {
+                    tree = fbTree;
+                    tokens = fbTokens;
+                    parserErrors = fbParserErrors;
+                    lexerErrors = fbLexerErrors;
+                    break;
+                }
+            }
         }
+
+        BaseExtractor.ExtractContext ctx = new BaseExtractor.ExtractContext(file, loaded.ruleNames, source);
+        applySourceMap(ctx, sourceMap);
         loaded.extractor.init(ctx, source);
         loaded.extractor.extract(tree, tokens, ctx);
 
@@ -672,7 +719,7 @@ public class GrammarDriver {
                 ParseTree tree = parser.parse(startRule);
 
                 BaseExtractor.ExtractContext ctx = new BaseExtractor.ExtractContext(file, loaded.ruleNames, source);
-                if (sourceMap != null) ctx.sourceMap = sourceMap;
+                applySourceMap(ctx, sourceMap);
                 loaded.extractor.init(ctx, source);
                 loaded.extractor.extract(tree, tokens, ctx);
 

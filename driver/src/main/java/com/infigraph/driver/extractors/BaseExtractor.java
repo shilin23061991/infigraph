@@ -55,7 +55,25 @@ public abstract class BaseExtractor {
         public final Set<String> seenIds = new HashSet<>();
         public final List<String> formNames = new ArrayList<>();
         public final Set<String> referencedForms = new LinkedHashSet<>();
-        public Map<Integer, ?> sourceMap;
+        public TreeMap<Integer, int[]> sourceMap;
+        public String[] sourceMapFiles;
+
+        public String resolveFile(int line) {
+            if (sourceMap == null) return file;
+            Map.Entry<Integer, int[]> entry = sourceMap.floorEntry(line);
+            if (entry == null) return file;
+            int fileIdx = entry.getValue()[0];
+            return (sourceMapFiles != null && fileIdx >= 0 && fileIdx < sourceMapFiles.length)
+                ? sourceMapFiles[fileIdx] : file;
+        }
+
+        public int resolveOriginalLine(int line) {
+            if (sourceMap == null) return line;
+            Map.Entry<Integer, int[]> entry = sourceMap.floorEntry(line);
+            if (entry == null) return line;
+            int origLine = entry.getValue()[1];
+            return origLine + (line - entry.getKey());
+        }
 
         public ExtractContext(String file, String[] ruleNames, String source) {
             this.file = file;
@@ -86,16 +104,27 @@ public abstract class BaseExtractor {
         }
 
         public String makeId(String name) {
+            return makeId(name, file);
+        }
+
+        public String makeId(String name, String resolvedFile) {
             String scope = currentScope();
-            return scope != null ? file + "::" + scope + "::" + name : file + "::" + name;
+            return scope != null ? resolvedFile + "::" + scope + "::" + name : resolvedFile + "::" + name;
         }
 
         public String sourceId() {
+            return sourceId(file);
+        }
+
+        public String sourceId(String resolvedFile) {
             String scope = currentScope();
-            return scope != null ? file + "::" + scope : file + "::" + fileStem;
+            return scope != null ? resolvedFile + "::" + scope : resolvedFile + "::" + fileStem;
         }
 
         public void pushSymbol(String name, String kind, int sl, int sc, int el, int ec, String text, boolean formQualified) {
+            String resolvedFile = resolveFile(sl);
+            int resolvedSl = resolveOriginalLine(sl);
+            int resolvedEl = resolveOriginalLine(el);
             if (formQualified && currentScope() == null && !formNames.isEmpty()) {
                 for (String formName : formNames) {
                     String fqId = formName + "::" + name;
@@ -105,18 +134,18 @@ public abstract class BaseExtractor {
                         s.id = fqId;
                         s.name = name;
                         s.kind = kind;
-                        s.file = file;
-                        s.startLine = sl; s.startCol = sc;
-                        s.endLine = el; s.endCol = ec;
+                        s.file = resolvedFile;
+                        s.startLine = resolvedSl; s.startCol = sc;
+                        s.endLine = resolvedEl; s.endCol = ec;
                         s.signatureHash = hexHash(text);
                         symbols.add(s);
                     }
                 }
                 return;
             }
-            String id = makeId(name);
+            String id = makeId(name, resolvedFile);
             if (seenIds.contains(id)) {
-                String base = id + "@L" + sl;
+                String base = id + "@L" + resolvedSl;
                 id = base;
                 int n = 1;
                 while (seenIds.contains(id)) {
@@ -129,23 +158,26 @@ public abstract class BaseExtractor {
             s.id = id;
             s.name = name;
             s.kind = kind;
-            s.file = file;
-            s.startLine = sl; s.startCol = sc;
-            s.endLine = el; s.endCol = ec;
+            s.file = resolvedFile;
+            s.startLine = resolvedSl; s.startCol = sc;
+            s.endLine = resolvedEl; s.endCol = ec;
             s.signatureHash = hexHash(text);
             String scope = currentScope();
-            if (scope != null) s.parent = file + "::" + scope;
+            if (scope != null) s.parent = resolvedFile + "::" + scope;
             symbols.add(s);
         }
 
         public void pushRelation(String targetName, String kind, int sl, int sc, int el, int ec) {
+            String resolvedFile = resolveFile(sl);
+            int resolvedSl = resolveOriginalLine(sl);
+            int resolvedEl = resolveOriginalLine(el);
             RelationOut r = new RelationOut();
-            r.sourceId = sourceId();
-            r.targetId = file + "::" + targetName;
+            r.sourceId = sourceId(resolvedFile);
+            r.targetId = resolvedFile + "::" + targetName;
             r.kind = kind;
-            r.file = file;
-            r.startLine = sl; r.startCol = sc;
-            r.endLine = el; r.endCol = ec;
+            r.file = resolvedFile;
+            r.startLine = resolvedSl; r.startCol = sc;
+            r.endLine = resolvedEl; r.endCol = ec;
             relations.add(r);
         }
 
