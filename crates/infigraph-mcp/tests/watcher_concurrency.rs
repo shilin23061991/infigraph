@@ -1,9 +1,14 @@
+use std::sync::Mutex;
+
 use serde_json::json;
 
 use infigraph_mcp::tools::graph::*;
 use infigraph_mcp::tools::index::tool_index_project;
 use infigraph_mcp::tools::search::tool_search;
 use infigraph_mcp::tools::watch::*;
+
+// All tests mutate the process-global WATCHERS map, so they must run sequentially.
+static WATCHER_LOCK: Mutex<()> = Mutex::new(());
 
 fn make_project(files: &[(&str, &str)]) -> (tempfile::TempDir, String) {
     let dir = tempfile::TempDir::new().expect("tmpdir");
@@ -42,6 +47,7 @@ fn extract_watcher_id(output: &str) -> String {
 /// This is the core scenario that broke on Windows due to Kuzu mandatory file locking.
 #[test]
 fn test_graph_tools_with_active_watchers() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     let (_dir_a, path_a) = make_project(&[
         (
             "src/main.py",
@@ -212,6 +218,7 @@ def handle_request():
 /// Graph tools on individual repos must work while group watchers are running.
 #[test]
 fn test_graph_tools_with_group_watchers() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     let home_dir = tempfile::TempDir::new().expect("tmpdir for home");
     let orig_home = std::env::var("HOME").unwrap_or_default();
     std::env::set_var("HOME", home_dir.path());
@@ -335,6 +342,7 @@ def get_users():
 /// MCP auto_start_watch should skip if CLI watcher holds the lock.
 #[test]
 fn test_mcp_skips_when_cli_lock_held() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     stop_all_watchers();
     init_watchers();
     let (_dir, path) = make_project(&[("main.py", "def hello(): pass")]);
@@ -366,6 +374,7 @@ fn test_mcp_skips_when_cli_lock_held() {
 /// MCP auto_start_watch should succeed when no CLI lock held.
 #[test]
 fn test_mcp_starts_when_no_cli_lock() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     stop_all_watchers();
     init_watchers();
     let (_dir, path) = make_project(&[("main.py", "def greet(): pass")]);
@@ -387,6 +396,7 @@ fn test_mcp_starts_when_no_cli_lock() {
 /// Search output should contain stale warning when no watcher running.
 #[test]
 fn test_stale_search_warning_no_watcher() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     stop_all_watchers();
     init_watchers();
     let (_dir, path) = make_project(&[("lib.py", "def compute(): return 42")]);
@@ -406,28 +416,18 @@ fn test_stale_search_warning_no_watcher() {
 /// Search output should NOT contain stale warning when MCP watcher running.
 #[test]
 fn test_no_stale_warning_with_mcp_watcher() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     stop_all_watchers();
     init_watchers();
     let (_dir, path) = make_project(&[("app.py", "def serve(): pass")]);
     tool_index_project(&json!({"path": &path})).unwrap();
+    // tool_index_project already started a watcher — it should be active
 
-    // On CI (e.g. inotify limit), the watcher thread may exit immediately after
-    // starting. Only assert if the watcher is confirmed active in the map.
-    let watcher_active = is_watching(
-        &std::path::PathBuf::from(&path)
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::PathBuf::from(&path))
-            .to_string_lossy()
-            .replace('\\', "/"),
+    let result = tool_search(&json!({"path": &path, "query": "serve"})).unwrap();
+    assert!(
+        !result.contains("No file watcher running"),
+        "should not warn when watcher is active, got: {result}"
     );
-
-    if watcher_active {
-        let result = tool_search(&json!({"path": &path, "query": "serve"})).unwrap();
-        assert!(
-            !result.contains("No file watcher running"),
-            "should not warn when watcher is active, got: {result}"
-        );
-    }
 
     stop_all_watchers();
 }
@@ -435,6 +435,7 @@ fn test_no_stale_warning_with_mcp_watcher() {
 /// Search output should NOT contain stale warning when CLI lock held.
 #[test]
 fn test_no_stale_warning_with_cli_watcher() {
+    let _guard = WATCHER_LOCK.lock().unwrap();
     stop_all_watchers();
     init_watchers();
     let (_dir, path) = make_project(&[("util.py", "def parse(): pass")]);
