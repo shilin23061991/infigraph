@@ -1,6 +1,10 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+
+// Kuzu uses mandatory file locking on Windows — only one connection per DB at a time.
+// Tests must run sequentially to avoid "Could not set lock on file" errors.
+static MEMORY_LOCK: Mutex<()> = Mutex::new(());
 
 use serde_json::json;
 
@@ -249,6 +253,7 @@ fn args(extra: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn test_memory_context_golden_cases() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     // --- G1: "authentication flow" without anchor ---
     let result = tool_memory_context(&args(json!({
         "query": "authentication flow"
@@ -517,6 +522,7 @@ fn signal_to_noise(output: &str, relevant: &[&str]) -> f64 {
 
 #[test]
 fn ab_comparison() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let questions = [
         ABQuestion {
             query: "authentication flow login",
@@ -662,6 +668,7 @@ struct DepthQuestion {
 
 #[test]
 fn depth_tier_comparison() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let questions = [
         DepthQuestion {
             query: "what does authenticate do",
@@ -824,6 +831,7 @@ fn depth_tier_comparison() {
 
 #[test]
 fn phase5_consolidation_validation() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let proj = shared_project();
 
     // Save multiple related sessions with distinct names so they don't merge
@@ -1134,6 +1142,7 @@ fn ab_live_codebase() {
 /// and L1 with too few symbols in anchor file should also escalate.
 #[test]
 fn auto_escalation_l1_to_l2() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // L1 without anchor → should auto-escalate to L2 (no panic, returns results)
@@ -1159,6 +1168,7 @@ fn auto_escalation_l1_to_l2() {
 /// than recent sessions for same-relevance query.
 #[test]
 fn confidence_decay_ranking() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1247,6 +1257,7 @@ fn confidence_decay_ranking() {
 /// Mechanism 7: Archive threshold — sessions with confidence < 0.3 excluded.
 #[test]
 fn archive_threshold_excludes_stale() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1324,6 +1335,7 @@ fn archive_threshold_excludes_stale() {
 /// Mechanism 8: Touch-on-access — memory_context should update last_accessed.
 #[test]
 fn touch_on_access_updates_last_accessed() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1391,6 +1403,7 @@ fn touch_on_access_updates_last_accessed() {
 /// and cluster boost (+0.1).
 #[test]
 fn symbol_clustering_end_to_end() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // Call memory_context multiple times with same query to build co-occurrence
@@ -1462,6 +1475,7 @@ fn symbol_clustering_end_to_end() {
 /// Mechanism 18: Instrumentation logging — memory_context should write JSONL log.
 #[test]
 fn instrumentation_logging() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     let log_path = PathBuf::from(&path)
@@ -1516,6 +1530,7 @@ fn instrumentation_logging() {
 /// observed at ~13s). Catches catastrophic regressions, not micro-latency.
 #[test]
 fn latency_reasonable() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // Warm up: first call initializes embedder
@@ -1547,6 +1562,7 @@ fn latency_reasonable() {
 /// should have higher scores than unrelated symbols.
 #[test]
 fn anchor_boost_score_verification() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // With anchor on api.py
@@ -1579,6 +1595,7 @@ fn anchor_boost_score_verification() {
 /// scoring actually changes the order.
 #[test]
 fn confidence_times_relevance_scoring() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1678,6 +1695,7 @@ fn confidence_times_relevance_scoring() {
 /// Diversity guarantee: at least 1 session result when both code and sessions exist.
 #[test]
 fn diversity_session_included() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // Need to embed the session for it to appear
@@ -1718,6 +1736,7 @@ fn diversity_session_included() {
 /// in the output alongside session content.
 #[test]
 fn always_include_ordering() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let (dir, path) = make_isolated_project();
 
     // Embed session
@@ -1761,6 +1780,7 @@ fn always_include_ordering() {
 /// when a relevant session exists with confidence > 0.5 and score > 0.7.
 #[test]
 fn auto_injection_symbol_context() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1826,6 +1846,7 @@ fn auto_injection_symbol_context() {
 /// Phase 4a: Auto-injection — get_doc_context should also auto-inject.
 #[test]
 fn auto_injection_doc_context() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1881,6 +1902,7 @@ fn auto_injection_doc_context() {
 /// Phase 4a: Auto-injection respects confidence threshold — stale sessions not injected.
 #[test]
 fn auto_injection_skips_low_confidence() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1938,6 +1960,7 @@ fn auto_injection_skips_low_confidence() {
 /// initial confidence than summary-only sessions.
 #[test]
 fn selective_indexing_confidence_scoring() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
@@ -1994,6 +2017,7 @@ fn selective_indexing_confidence_scoring() {
 /// Phase 4b: Selective indexing tiers — decisions (no markers) get mid confidence.
 #[test]
 fn selective_indexing_mid_tier() {
+    let _guard = MEMORY_LOCK.lock().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().to_string_lossy().to_string();
 
