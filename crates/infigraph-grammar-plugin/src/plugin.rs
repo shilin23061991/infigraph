@@ -245,11 +245,12 @@ pub fn discover_plugins(plugins_dir: &Path) -> Result<Vec<(GrammarPluginConfig, 
 /// passes through unchanged.
 fn resolve_extractor(plugin_dir: &Path, extractor: &str) -> Result<String> {
     if extractor.ends_with(".java") {
-        plugin_dir
-            .join(extractor)
+        let joined = plugin_dir.join(extractor);
+        let s = joined
             .to_str()
-            .context("Invalid extractor path")
-            .map(str::to_string)
+            .context("Invalid extractor path")?
+            .replace('\\', "/");
+        Ok(s)
     } else {
         Ok(extractor.to_string())
     }
