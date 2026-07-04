@@ -502,7 +502,7 @@ fn test_generate_test_context() {
 
     let conn = tg.store.connection().unwrap();
     let q = GraphQuery::new(&conn);
-    let ctx = q.generate_test_context(None, 10).unwrap();
+    let ctx = q.generate_test_context(None, 10, None).unwrap();
     assert!(!ctx.targets.is_empty(), "should have untested targets");
     for t in &ctx.targets {
         assert_ne!(t.kind, "Test", "test symbols should not be targets");
@@ -516,7 +516,7 @@ fn test_generate_test_context_file_filter() {
 
     let conn = tg.store.connection().unwrap();
     let q = GraphQuery::new(&conn);
-    let ctx = q.generate_test_context(Some("models"), 10).unwrap();
+    let ctx = q.generate_test_context(Some("models"), 10, None).unwrap();
     for t in &ctx.targets {
         assert!(
             t.file.contains("models"),
@@ -532,12 +532,159 @@ fn test_detect_test_framework() {
     let q = GraphQuery::new(&conn);
 
     // Our test fixtures have @pytest in docstring
-    let ctx = q.generate_test_context(None, 1).unwrap();
+    let ctx = q.generate_test_context(None, 1, None).unwrap();
     assert!(
         ctx.framework.contains("pytest") || ctx.framework.contains("python"),
         "expected pytest framework, got: {}",
         ctx.framework
     );
+}
+
+#[test]
+fn test_generate_test_context_templates_all_types() {
+    let tg = setup();
+    tg.store.derive_tested_by_edges().unwrap();
+
+    let conn = tg.store.connection().unwrap();
+    let q = GraphQuery::new(&conn);
+    let ctx = q.generate_test_context(None, 10, None).unwrap();
+    assert!(
+        !ctx.templates.is_empty(),
+        "should have templates for detected framework ({})",
+        ctx.framework
+    );
+    for tpl in &ctx.templates {
+        assert!(!tpl.test_type.is_empty(), "test_type should not be empty");
+        assert!(
+            !tpl.conventions.is_empty(),
+            "conventions should not be empty"
+        );
+        assert!(!tpl.scaffold.is_empty(), "scaffold should not be empty");
+    }
+}
+
+#[test]
+fn test_generate_test_context_templates_filtered_type() {
+    let tg = setup();
+    tg.store.derive_tested_by_edges().unwrap();
+
+    let conn = tg.store.connection().unwrap();
+    let q = GraphQuery::new(&conn);
+    let ctx = q.generate_test_context(None, 10, Some("unit")).unwrap();
+    assert_eq!(
+        ctx.templates.len(),
+        1,
+        "should have exactly one template for 'unit'"
+    );
+    assert_eq!(ctx.templates[0].test_type, "unit");
+}
+
+#[test]
+fn test_generate_test_context_templates_unknown_framework() {
+    use infigraph_core::graph::test_templates::test_templates_for;
+    let templates = test_templates_for("unknown_framework", None);
+    assert!(
+        templates.is_empty(),
+        "unknown framework should return no templates"
+    );
+}
+
+#[test]
+fn test_templates_all_frameworks_have_output() {
+    use infigraph_core::graph::test_templates::test_templates_for;
+    let frameworks = [
+        "rust (cargo test)",
+        "python (pytest)",
+        "python (unittest)",
+        "java (junit)",
+        "javascript (jest)",
+        "javascript (vitest)",
+        "javascript (mocha)",
+        "karate",
+        "playwright",
+        "cypress",
+        "go (go test)",
+        "csharp (xunit)",
+        "csharp (nunit)",
+        "csharp (mstest)",
+        "kotlin (kotest)",
+        "scala (scalatest)",
+        "ruby (rspec)",
+        "ruby (minitest)",
+        "swift (XCTest)",
+        "elixir (ExUnit)",
+        "java (testng)",
+        "bdd (cucumber)",
+    ];
+    for fw in &frameworks {
+        let templates = test_templates_for(fw, None);
+        assert!(
+            !templates.is_empty(),
+            "framework '{}' should return at least one template",
+            fw
+        );
+        for tpl in &templates {
+            assert!(
+                !tpl.conventions.is_empty(),
+                "{} {} conventions empty",
+                fw,
+                tpl.test_type
+            );
+            assert!(
+                !tpl.scaffold.is_empty(),
+                "{} {} scaffold empty",
+                fw,
+                tpl.test_type
+            );
+        }
+    }
+}
+
+#[test]
+fn test_templates_test_type_filter() {
+    use infigraph_core::graph::test_templates::test_templates_for;
+    for tt in &["unit", "integration", "functional", "e2e"] {
+        let templates = test_templates_for("python (pytest)", Some(tt));
+        assert!(
+            templates.len() <= 1,
+            "filtered by '{}' should return 0 or 1 template, got {}",
+            tt,
+            templates.len()
+        );
+        if !templates.is_empty() {
+            assert_eq!(templates[0].test_type, *tt);
+        }
+    }
+}
+
+#[test]
+fn test_templates_rust_has_unit_integration_e2e() {
+    use infigraph_core::graph::test_templates::test_templates_for;
+    let templates = test_templates_for("rust (cargo test)", None);
+    let types: Vec<&str> = templates.iter().map(|t| t.test_type.as_str()).collect();
+    assert!(types.contains(&"unit"), "rust should have unit template");
+    assert!(
+        types.contains(&"integration"),
+        "rust should have integration template"
+    );
+    assert!(types.contains(&"e2e"), "rust should have e2e template");
+}
+
+#[test]
+fn test_templates_pytest_has_all_four_types() {
+    use infigraph_core::graph::test_templates::test_templates_for;
+    let templates = test_templates_for("python (pytest)", None);
+    let types: Vec<&str> = templates.iter().map(|t| t.test_type.as_str()).collect();
+    assert!(types.contains(&"unit"), "pytest should have unit");
+    assert!(
+        types.contains(&"integration"),
+        "pytest should have integration"
+    );
+    assert!(
+        types.contains(&"functional"),
+        "pytest should have functional"
+    );
+    assert!(types.contains(&"e2e"), "pytest should have e2e");
 }
 
 // ---------- GraphStore tests ----------

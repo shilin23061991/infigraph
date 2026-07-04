@@ -12,6 +12,7 @@ use super::queries::{
     TestTarget, TypeHierarchy,
 };
 use super::store::GraphStats;
+use super::test_templates::test_templates_for;
 use crate::model::{FileExtraction, RelationKind};
 
 type Params = BTreeMap<String, DataValue>;
@@ -498,9 +499,11 @@ impl CozoStore {
         &self,
         file_filter: Option<&str>,
         limit: usize,
+        test_type: Option<&str>,
     ) -> Result<TestContext> {
         let framework = self.detect_test_framework()?;
         let example_test = self.find_example_test(file_filter)?;
+        let templates = test_templates_for(&framework, test_type);
 
         // Get tested symbol IDs (small set, indexed)
         let r_tested = self.run(r#"?[symbol_id] := *tested_by{symbol_id, test_id: _}"#)?;
@@ -577,6 +580,7 @@ impl CozoStore {
             framework,
             example_test,
             targets,
+            templates,
         })
     }
 
@@ -593,9 +597,14 @@ impl CozoStore {
                     "go" => "go (go test)",
                     "rust" => "rust (cargo test)",
                     "python" => "python (unittest/pytest)",
-                    "java" | "kotlin" => "java (junit)",
+                    "java" => "java (junit)",
+                    "kotlin" => "kotlin (kotlin-test)",
+                    "scala" => "scala (scalatest)",
                     "csharp" => "csharp (nunit/xunit)",
                     "javascript" | "typescript" => "javascript (jest/vitest)",
+                    "ruby" => "ruby (rspec)",
+                    "swift" => "swift (XCTest)",
+                    "elixir" => "elixir (ExUnit)",
                     _ if !lang.is_empty() => return Ok(format!("{lang} (detected)")),
                     _ => "unknown",
                 };

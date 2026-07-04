@@ -791,8 +791,9 @@ pub fn tool_generate_test_context(args: &Value) -> Result<String> {
 
     let file_filter = args.get("file").and_then(|v| v.as_str());
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    let test_type = args.get("test_type").and_then(|v| v.as_str());
 
-    let ctx = gq.generate_test_context(file_filter, limit)?;
+    let ctx = gq.generate_test_context(file_filter, limit, test_type)?;
 
     let mut out = format!(
         "## Test Generation Context\n\nFramework: {}\n",
@@ -883,6 +884,17 @@ pub fn tool_generate_test_context(args: &Value) -> Result<String> {
             }
         }
         out.push('\n');
+    }
+
+    if !ctx.templates.is_empty() {
+        out.push_str("\n### Framework Templates\n\n");
+        for tpl in &ctx.templates {
+            out.push_str(&format!("#### {} test\n", tpl.test_type));
+            out.push_str(&format!("**Conventions:** {}\n\n", tpl.conventions));
+            out.push_str("**Scaffold:**\n```\n");
+            out.push_str(&tpl.scaffold);
+            out.push_str("\n```\n\n");
+        }
     }
 
     Ok(out)

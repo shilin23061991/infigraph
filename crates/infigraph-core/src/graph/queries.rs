@@ -2,6 +2,8 @@ use anyhow::Result;
 use kuzu::Connection;
 use serde::Serialize;
 
+use super::test_templates::{test_templates_for, TestTemplate};
+
 /// High-level graph query interface for analysis.
 pub struct GraphQuery<'a, 'db> {
     conn: &'a Connection<'db>,
@@ -524,9 +526,11 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
         &self,
         file_filter: Option<&str>,
         limit: usize,
+        test_type: Option<&str>,
     ) -> Result<TestContext> {
         let framework = self.detect_test_framework()?;
         let example_test = self.find_example_test(file_filter)?;
+        let templates = test_templates_for(&framework, test_type);
 
         let q = String::from(
             "MATCH (s:Symbol) \
@@ -595,6 +599,7 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
             framework,
             example_test,
             targets,
+            templates,
         })
     }
 
@@ -616,6 +621,9 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
             }
             if doc.contains("@Test") || doc.contains("@ParameterizedTest") {
                 *frameworks.entry("java (junit)").or_insert(0) += 1;
+            }
+            if doc.contains("@DataProvider") || doc.contains("org.testng") {
+                *frameworks.entry("java (testng)").or_insert(0) += 1;
             }
             if doc.contains("[Test]") || doc.contains("[Fact]") || doc.contains("[Theory]") {
                 *frameworks.entry("csharp (nunit/xunit)").or_insert(0) += 1;
@@ -658,6 +666,12 @@ impl<'a, 'db> GraphQuery<'a, 'db> {
                             || dep.contains("munit")
                         {
                             return Ok(format!("scala ({})", dep));
+                        }
+                        if dep.contains("testng") {
+                            return Ok("java (testng)".to_string());
+                        }
+                        if dep.contains("cucumber") || dep.contains("gherkin") {
+                            return Ok("bdd (cucumber)".to_string());
                         }
                     }
                 }
@@ -866,6 +880,7 @@ pub struct TestContext {
     pub framework: String,
     pub example_test: Option<ExampleTest>,
     pub targets: Vec<TestTarget>,
+    pub templates: Vec<TestTemplate>,
 }
 
 #[derive(Debug, Serialize)]

@@ -9,6 +9,7 @@ mod store_bulk;
 mod store_parquet;
 pub(crate) mod store_util;
 mod store_write;
+pub mod test_templates;
 
 pub use cozo_store::CozoStore;
 pub use queries::{
@@ -18,6 +19,7 @@ pub use queries::{
 };
 pub use session_store::{SessionData, SessionStore};
 pub use store::{GraphStats, GraphStore};
+pub use test_templates::{test_templates_for, TestTemplate};
 
 pub fn schema_ddl() -> Vec<&'static str> {
     let mut all: Vec<&str> = schema::CREATE_SCHEMA.to_vec();
