@@ -89,6 +89,7 @@ pub(crate) fn cmd_install() -> Result<()> {
     crate::hooks::install_edit_tracker_hook(&home)?;
     crate::hooks::install_session_save_hook(&home)?;
     crate::hooks::install_clear_suggest_hook(&home)?;
+    crate::hooks::install_clear_guard_hook(&home)?;
     crate::hooks::install_session_end_hook(&home)?;
     crate::hooks::install_test_context_sentinel_hook(&home)?;
     crate::hooks::install_search_fallback_sentinel_hook(&home)?;
@@ -689,6 +690,7 @@ fn reinstall_hooks() -> Result<()> {
     crate::hooks::install_edit_tracker_hook(&home)?;
     crate::hooks::install_session_save_hook(&home)?;
     crate::hooks::install_clear_suggest_hook(&home)?;
+    crate::hooks::install_clear_guard_hook(&home)?;
     crate::hooks::install_session_end_hook(&home)?;
     crate::hooks::install_test_context_sentinel_hook(&home)?;
     crate::hooks::install_search_fallback_sentinel_hook(&home)?;

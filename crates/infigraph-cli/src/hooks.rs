@@ -294,6 +294,38 @@ fi
 exit 0
 "#;
 
+pub(crate) const CLEAR_GUARD_HOOK_SCRIPT: &str = r##"#!/usr/bin/env bash
+# Infigraph UserPromptSubmit hook — block /clear unless session was saved recently.
+# Checks the session-reset sentinel set by PostToolUse after save_session.
+
+input=$(cat)
+prompt=$(echo "$input" | jq -r '.prompt // empty')
+cwd=$(echo "$input" | jq -r '.cwd // empty')
+session_id=$(echo "$input" | jq -r '.session_id // empty')
+
+# Only guard infigraph-indexed projects
+[ -d "$cwd/.infigraph" ] || exit 0
+
+# Check if prompt is /clear
+cleaned=$(echo "$prompt" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+[ "$cleaned" = "/clear" ] || exit 0
+
+# Check if session was saved recently (sentinel set by session-reset hook after save_session)
+counter_dir="${TMPDIR:-/tmp}/infigraph-sessions"
+counter_file="$counter_dir/$session_id.count"
+count=0
+[ -f "$counter_file" ] && count=$(cat "$counter_file" 2>/dev/null || echo 0)
+
+# count is reset to 0 after save_session. If it's 0, save was recent.
+if [ "$count" != "0" ]; then
+  cat <<'ENDJSON'
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","decision":"block","reason":"⚠️ Session not saved! Call save_session first, then /clear. Unsaved context will be lost."}}
+ENDJSON
+fi
+
+exit 0
+"##;
+
 pub fn allowed_tools() -> Vec<String> {
     infigraph_mcp::allowed_tools_from_names()
 }
@@ -831,6 +863,77 @@ pub(crate) fn install_clear_suggest_hook(home: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn install_clear_guard_hook(home: &std::path::Path) -> Result<()> {
+    let hooks_dir = home.join(".claude").join("hooks");
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    let hook_path = hooks_dir.join("infigraph-clear-guard.sh");
+    std::fs::write(&hook_path, CLEAR_GUARD_HOOK_SCRIPT)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    println!("  Installed clear guard hook: {}", hook_path.display());
+
+    let settings_path = home.join(".claude").join("settings.json");
+    let mut settings: serde_json::Value = if settings_path.is_file() {
+        let content = std::fs::read_to_string(&settings_path)?;
+        serde_json::from_str(&content)?
+    } else {
+        json!({})
+    };
+
+    if settings.get("hooks").is_none() {
+        settings["hooks"] = json!({});
+    }
+
+    let hook_entry = json!({
+        "hooks": [{
+            "type": "command",
+            "command": hook_path.to_string_lossy(),
+            "timeout": 5
+        }]
+    });
+
+    let user_prompt = settings["hooks"]
+        .get("UserPromptSubmit")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let already_exists = user_prompt.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c.contains("infigraph-clear-guard"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    if !already_exists {
+        let mut arr = user_prompt;
+        arr.push(hook_entry);
+        settings["hooks"]["UserPromptSubmit"] = serde_json::Value::Array(arr);
+        let pretty = serde_json::to_string_pretty(&settings)?;
+        std::fs::write(&settings_path, pretty)?;
+        println!(
+            "  Added UserPromptSubmit clear-guard hook to {}",
+            settings_path.display()
+        );
+    } else {
+        println!("  UserPromptSubmit clear-guard hook already configured");
+    }
+
+    Ok(())
+}
+
 pub(crate) fn install_session_end_hook(home: &std::path::Path) -> Result<()> {
     let hooks_dir = home.join(".claude").join("hooks");
     std::fs::create_dir_all(&hooks_dir)?;
@@ -1166,6 +1269,7 @@ pub(crate) fn uninstall_hooks(home: &std::path::Path) -> Result<()> {
         "infigraph-session-reset.sh",
         "infigraph-session-start.sh",
         "infigraph-clear-suggest.sh",
+        "infigraph-clear-guard.sh",
         "infigraph-session-end-save.sh",
         "infigraph-test-context-sentinel.sh",
         "infigraph-search-fallback-sentinel.sh",
@@ -1421,6 +1525,14 @@ mod tests {
     }
 
     #[test]
+    fn install_clear_guard_hook_creates_file() {
+        let (_tmp, home) = setup_home();
+        install_clear_guard_hook(&home).unwrap();
+
+        assert!(home.join(".claude/hooks/infigraph-clear-guard.sh").exists());
+    }
+
+    #[test]
     fn uninstall_removes_all_hook_files() {
         let (_tmp, home) = setup_home();
 
@@ -1428,6 +1540,7 @@ mod tests {
         install_edit_tracker_hook(&home).unwrap();
         install_session_save_hook(&home).unwrap();
         install_clear_suggest_hook(&home).unwrap();
+        install_clear_guard_hook(&home).unwrap();
         install_session_end_hook(&home).unwrap();
         install_test_context_sentinel_hook(&home).unwrap();
         install_search_fallback_sentinel_hook(&home).unwrap();
@@ -1439,6 +1552,7 @@ mod tests {
             "infigraph-session-reset.sh",
             "infigraph-session-start.sh",
             "infigraph-clear-suggest.sh",
+            "infigraph-clear-guard.sh",
             "infigraph-session-end-save.sh",
             "infigraph-test-context-sentinel.sh",
             "infigraph-search-fallback-sentinel.sh",
@@ -1467,6 +1581,7 @@ mod tests {
         install_enforcement_hook(&home).unwrap();
         install_edit_tracker_hook(&home).unwrap();
         install_session_save_hook(&home).unwrap();
+        install_clear_guard_hook(&home).unwrap();
         install_session_end_hook(&home).unwrap();
         install_test_context_sentinel_hook(&home).unwrap();
         install_search_fallback_sentinel_hook(&home).unwrap();
