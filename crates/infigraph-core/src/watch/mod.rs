@@ -24,6 +24,8 @@ pub enum WatchEventKind {
     Modified,
     Created,
     Removed,
+    WatcherRestarted,
+    WatcherDied,
 }
 
 impl std::fmt::Display for WatchEvent {
@@ -32,6 +34,8 @@ impl std::fmt::Display for WatchEvent {
             WatchEventKind::Modified => "modified",
             WatchEventKind::Created => "created",
             WatchEventKind::Removed => "removed",
+            WatchEventKind::WatcherRestarted => "watcher-restarted",
+            WatchEventKind::WatcherDied => "watcher-died",
         };
         if self.has_cross_file_calls {
             write!(
@@ -86,12 +90,6 @@ where
     MR: Fn() -> Result<crate::lang::LanguageRegistry> + Send + 'static,
     F: Fn(&crate::IndexResult) + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-
-    let config = Config::default().with_poll_interval(Duration::from_millis(debounce_ms));
-
-    let mut watcher = RecommendedWatcher::new(tx, config)?;
-
     let ignore_dirs: &[&str] = &[
         ".infigraph",
         ".git",
@@ -105,8 +103,6 @@ where
         ".tox",
     ];
 
-    register_watch_dirs(&mut watcher, root, ignore_dirs)?;
-
     // Build a registry once for file-extension filtering (no DB needed).
     let filter_registry = make_registry()?;
 
@@ -118,6 +114,23 @@ where
     let mut batch = ChangeBatch::new(1000);
 
     let sentinel = root.join(".infigraph").join("watch.stop");
+
+    const MAX_RESTARTS: u32 = 3;
+    let mut restart_count: u32 = 0;
+
+    // Create initial watcher — factored into a closure for restart.
+    let create_watcher =
+        |root: &Path,
+         ignore_dirs: &[&str]|
+         -> Result<(RecommendedWatcher, mpsc::Receiver<notify::Result<Event>>)> {
+            let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+            let config = Config::default().with_poll_interval(Duration::from_millis(debounce_ms));
+            let mut watcher = RecommendedWatcher::new(tx, config)?;
+            register_watch_dirs(&mut watcher, root, ignore_dirs)?;
+            Ok((watcher, rx))
+        };
+
+    let (mut watcher, mut rx) = create_watcher(root, ignore_dirs)?;
 
     loop {
         if stop_rx.try_recv().is_ok() {
@@ -229,12 +242,53 @@ where
                                 batch.add(path);
                             }
                         }
+                        WatchEventKind::WatcherRestarted | WatchEventKind::WatcherDied => {}
                     }
                 }
             }
             Ok(Err(e)) => eprintln!("watch error: {e}"),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // Watcher's internal thread died (e.g. kqueue panic on dir deletion).
+                // Attempt restart with backoff.
+                restart_count += 1;
+                if restart_count > MAX_RESTARTS {
+                    eprintln!("[watch] watcher died {restart_count} times, giving up");
+                    on_event(WatchEvent {
+                        kind: WatchEventKind::WatcherDied,
+                        path: root.to_path_buf(),
+                        has_cross_file_calls: false,
+                    });
+                    break;
+                }
+                let backoff = Duration::from_secs(restart_count as u64);
+                eprintln!(
+                    "[watch] watcher disconnected, restarting ({restart_count}/{MAX_RESTARTS}) after {}s",
+                    backoff.as_secs()
+                );
+                std::thread::sleep(backoff);
+                match create_watcher(root, ignore_dirs) {
+                    Ok((new_watcher, new_rx)) => {
+                        watcher = new_watcher;
+                        rx = new_rx;
+                        eprintln!("[watch] watcher restarted successfully");
+                        on_event(WatchEvent {
+                            kind: WatchEventKind::WatcherRestarted,
+                            path: root.to_path_buf(),
+                            has_cross_file_calls: false,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[watch] watcher restart failed: {e}");
+                        on_event(WatchEvent {
+                            kind: WatchEventKind::WatcherDied,
+                            path: root.to_path_buf(),
+                            has_cross_file_calls: false,
+                        });
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -265,6 +319,17 @@ where
     let factory_for_event = Arc::clone(&factory);
     watch_project(root, move || factory(), debounce_ms, stop_rx, {
         move |evt: WatchEvent| {
+            match evt.kind {
+                WatchEventKind::WatcherRestarted => {
+                    eprintln!("[watch {prefix}] watcher restarted after internal failure");
+                    return;
+                }
+                WatchEventKind::WatcherDied => {
+                    eprintln!("[watch {prefix}] watcher died permanently");
+                    return;
+                }
+                _ => {}
+            }
             if evt.has_cross_file_calls {
                 eprintln!("[watch {prefix}] {evt}");
                 if let Ok(reg) = factory_for_event() {

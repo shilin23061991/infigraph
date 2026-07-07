@@ -4,7 +4,28 @@ use std::sync::{mpsc, Arc, Mutex};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use infigraph_core::watch::WatchEventKind;
 use infigraph_languages::bundled_registry;
+
+fn watch_log(level: &str, msg: &str) {
+    use std::io::Write;
+    let path = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".infigraph")
+        .join("mcp.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {level}: {msg}");
+    }
+}
 
 pub struct WatcherEntry {
     pub stop_tx: mpsc::Sender<()>,
@@ -140,13 +161,28 @@ pub fn tool_watch_project(args: &Value) -> Result<String> {
                 stop_rx,
                 &id_short,
             ) {
-                eprintln!("[watch] error: {e}");
+                let msg = format!("watcher {id_short} auto_resolve error: {e}");
+                eprintln!("[watch] {msg}");
+                watch_log("ERROR", &msg);
             }
         } else {
             let on_event = {
                 let id_short = id_short.clone();
-                move |evt: infigraph_core::watch::WatchEvent| {
-                    if evt.has_cross_file_calls {
+                move |evt: infigraph_core::watch::WatchEvent| match evt.kind {
+                    WatchEventKind::WatcherRestarted => {
+                        let msg = format!("watcher {id_short} restarted after internal failure");
+                        eprintln!("[watch {id_short}] {msg}");
+                        watch_log("WARN", &msg);
+                    }
+                    WatchEventKind::WatcherDied => {
+                        let msg = format!(
+                            "watcher {id_short} died permanently for {}",
+                            evt.path.display()
+                        );
+                        eprintln!("[watch {id_short}] {msg}");
+                        watch_log("ERROR", &msg);
+                    }
+                    _ if evt.has_cross_file_calls => {
                         let file = evt.path.to_string_lossy().replace('\\', "/");
                         eprintln!("[watch {id_short}] {evt}");
                         let mut pending = pending_clone.lock().unwrap();
@@ -154,7 +190,8 @@ pub fn tool_watch_project(args: &Value) -> Result<String> {
                             pending.push(file);
                         }
                         eprintln!("[watch {id_short}] ⚠ cross-file calls affected — call index_project to re-resolve (or use auto_resolve=true)");
-                    } else {
+                    }
+                    _ => {
                         eprintln!("[watch {id_short}] {evt}");
                     }
                 }
@@ -166,7 +203,9 @@ pub fn tool_watch_project(args: &Value) -> Result<String> {
                 stop_rx,
                 on_event,
             ) {
-                eprintln!("[watch] error: {e}");
+                let msg = format!("watcher {id_short} error: {e}");
+                eprintln!("[watch] {msg}");
+                watch_log("ERROR", &msg);
             }
         }
         let mut guard = WATCHERS.lock().unwrap();

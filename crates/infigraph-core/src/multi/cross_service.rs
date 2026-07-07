@@ -64,6 +64,16 @@ pub fn detect_cross_service_deps(
         }
     }
 
+    // Helper closure: exact match first, then wildcard fallback (path + "/*").
+    let lookup_route = |normalized: &str| -> Option<&(String, String)> {
+        if let Some(hit) = route_lookup.get(normalized) {
+            return Some(hit);
+        }
+        // Fallback: consumer calls /v1/customers, producer has /v1/customers/*
+        let wildcard = format!("{}/*", normalized);
+        route_lookup.get(&wildcard)
+    };
+
     let mut deps = Vec::new();
 
     for repo_name in &group.repos {
@@ -100,7 +110,7 @@ pub fn detect_cross_service_deps(
             let urls = extract_api_paths(doc);
             for url in urls {
                 let normalized = normalize_route_path(&url);
-                if let Some((target_svc, target_method)) = route_lookup.get(&normalized) {
+                if let Some((target_svc, target_method)) = lookup_route(&normalized) {
                     if target_svc != repo_name {
                         deps.push(CrossServiceDep {
                             caller_service: repo_name.clone(),
@@ -118,10 +128,12 @@ pub fn detect_cross_service_deps(
 
         // Also grep source files for URL patterns
         let source_urls = scan_source_for_urls(&entry.path);
-        for (file, symbol_hint, url) in source_urls {
+        for (file, symbol_hint, url, consumer_method) in source_urls {
             let normalized = normalize_route_path(&url);
-            if let Some((target_svc, target_method)) = route_lookup.get(&normalized) {
+            if let Some((target_svc, target_method)) = lookup_route(&normalized) {
                 if target_svc != repo_name {
+                    let effective_method =
+                        consumer_method.as_deref().unwrap_or(target_method.as_str());
                     // Try to resolve line hint to enclosing symbol ID
                     let caller_id = if let Some(stripped) = symbol_hint.strip_prefix("line:") {
                         let line_num: i32 = stripped.parse().unwrap_or(0);
@@ -143,7 +155,7 @@ pub fn detect_cross_service_deps(
                         caller_file: file,
                         caller_symbol: caller_id,
                         target_service: target_svc.clone(),
-                        target_method: target_method.clone(),
+                        target_method: effective_method.to_string(),
                         target_path: url.clone(),
                         url_found: url,
                     });
@@ -333,6 +345,17 @@ fn normalize_route_path(path: &str) -> String {
         .join("/")
 }
 
+/// Strip a leading f-string/template interpolation prefix like `{svc_url}` to
+/// reveal the route path portion (e.g. `{svc_url}/v1/customers` → `/v1/customers`).
+fn strip_fstring_prefix(s: &str) -> &str {
+    if s.starts_with('{') {
+        if let Some(close) = s.find('}') {
+            return &s[close + 1..];
+        }
+    }
+    s
+}
+
 /// Check if a path looks like an HTTP route (starts with /api/ or /v{N}/).
 fn is_route_like_path(s: &str) -> bool {
     if s.starts_with("/api/") {
@@ -367,11 +390,35 @@ fn extract_api_paths(text: &str) -> Vec<String> {
                     paths.push(path_part.to_string());
                 }
             }
-        } else if is_route_like_path(trimmed) {
-            paths.push(trimmed.to_string());
+        } else {
+            let stripped = strip_fstring_prefix(trimmed);
+            if is_route_like_path(stripped) {
+                paths.push(stripped.to_string());
+            }
         }
     }
     paths
+}
+
+/// Extract the HTTP method from a source line containing a URL reference.
+/// Recognises patterns like `requests.get(`, `http.delete(`, `.post(`, `method="PUT"`, etc.
+fn extract_http_method_from_line(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for method in &["get", "post", "put", "delete", "patch"] {
+        // requests.get( / http.get( / client.get( / session.get(
+        let dot_pattern = format!(".{}(", method);
+        if lower.contains(&dot_pattern) {
+            return Some(method.to_ascii_uppercase());
+        }
+        // method="GET" / method: "GET" / method='GET'
+        for sep in &["=\"", "='", ": \"", ": '", ":'", "=\""] {
+            let method_pattern = format!("method{}{}", sep, method);
+            if lower.contains(&method_pattern) {
+                return Some(method.to_ascii_uppercase());
+            }
+        }
+    }
+    None
 }
 
 /// Check if a relative file path looks like a test or documentation file.
@@ -410,7 +457,8 @@ fn is_test_or_doc_file(rel_path: &str) -> bool {
 /// Scan source files for URL strings matching route patterns.
 /// Also resolves named constants (e.g., `DOC_UPLOAD_PATH = "/v1/..."`) and
 /// credits the definition line when the constant is referenced elsewhere.
-fn scan_source_for_urls(root: &Path) -> Vec<(String, String, String)> {
+/// Returns (file, line_hint, url, consumer_http_method).
+fn scan_source_for_urls(root: &Path) -> Vec<(String, String, String, Option<String>)> {
     const SKIP_DIRS: &[&str] = &[
         ".infigraph",
         ".git",
@@ -431,7 +479,7 @@ fn walk_for_urls(
     base: &Path,
     dir: &Path,
     skip: &[&str],
-    results: &mut Vec<(String, String, String)>,
+    results: &mut Vec<(String, String, String, Option<String>)>,
     url_constants: &mut HashMap<String, Vec<(String, usize, String)>>,
 ) {
     let entries = match std::fs::read_dir(dir) {
@@ -472,13 +520,15 @@ fn walk_for_urls(
                                     .and_then(|s| s.find('/').map(|i| &s[i..]))
                                     .unwrap_or(trimmed)
                             } else {
-                                trimmed
+                                strip_fstring_prefix(trimmed)
                             };
                             if is_route_like_path(path_part) {
+                                let consumer_method = extract_http_method_from_line(line);
                                 results.push((
                                     rel.clone(),
                                     format!("line:{}", line_num + 1),
                                     path_part.to_string(),
+                                    consumer_method,
                                 ));
                                 // Record as named constant if line is an assignment
                                 if let Some(const_name) = extract_constant_name(line, path_part) {
@@ -592,21 +642,26 @@ fn walk_for_contracts(
                 for delim in ['"', '\'', '`'] {
                     for part in line.split(delim) {
                         let trimmed = part.trim();
-                        if trimmed.len() < 200
-                            && !trimmed.is_empty()
-                            && !trimmed.contains(' ')
-                            && trimmed.starts_with('/')
+                        let stripped = strip_fstring_prefix(trimmed);
+                        if stripped.len() < 200
+                            && !stripped.is_empty()
+                            && !stripped.contains(' ')
+                            && stripped.starts_with('/')
                         {
-                            let normalized = normalize_route_path(trimmed);
-                            if let Some((target_svc, target_method)) = route_lookup.get(&normalized)
-                            {
+                            let normalized = normalize_route_path(stripped);
+                            let hit = route_lookup
+                                .get(&normalized)
+                                .or_else(|| route_lookup.get(&format!("{}/*", normalized)));
+                            if let Some((target_svc, target_method)) = hit {
                                 if target_svc != caller_repo {
+                                    let effective_method = extract_http_method_from_line(line)
+                                        .unwrap_or_else(|| target_method.clone());
                                     results.push((
                                         rel.clone(),
                                         format!("line:{}", line_num + 1),
-                                        trimmed.to_string(),
+                                        stripped.to_string(),
                                         target_svc.clone(),
-                                        target_method.clone(),
+                                        effective_method,
                                     ));
                                 }
                             }
@@ -831,7 +886,7 @@ class ServiceClient:
         )
         .unwrap();
         let results = scan_source_for_urls(dir.path());
-        let paths: Vec<&str> = results.iter().map(|(_, _, p)| p.as_str()).collect();
+        let paths: Vec<&str> = results.iter().map(|(_, _, p, _)| p.as_str()).collect();
         assert!(
             paths.contains(&"/v1/labrador/doc-upload"),
             "should find /v1/ path, got {:?}",
@@ -947,7 +1002,7 @@ VERSION = "v1.2.3"
         )
         .unwrap();
         let results = scan_source_for_urls(dir.path());
-        let paths: Vec<&str> = results.iter().map(|(_, _, p)| p.as_str()).collect();
+        let paths: Vec<&str> = results.iter().map(|(_, _, p, _)| p.as_str()).collect();
         assert!(
             paths.contains(&"/v1/users"),
             "should find TS constant path, got {:?}",
@@ -1054,5 +1109,79 @@ VERSION = "v1.2.3"
             own_deps.contains(&pkg_name.as_str()),
             "self-dep exists but must be filtered by caller"
         );
+    }
+
+    #[test]
+    fn test_strip_fstring_prefix() {
+        assert_eq!(
+            strip_fstring_prefix("{svc_url}/v1/customers"),
+            "/v1/customers"
+        );
+        assert_eq!(strip_fstring_prefix("{base}/api/foo"), "/api/foo");
+        assert_eq!(strip_fstring_prefix("/v1/projects"), "/v1/projects");
+        assert_eq!(strip_fstring_prefix("plain_string"), "plain_string");
+        assert_eq!(strip_fstring_prefix("{unclosed"), "{unclosed");
+    }
+
+    #[test]
+    fn test_extract_api_paths_fstring() {
+        let line = r#"url = f"{svc_url}/v1/customers""#;
+        let paths = extract_api_paths(line);
+        assert!(
+            paths.contains(&"/v1/customers".to_string()),
+            "should extract /v1/customers from f-string, got: {:?}",
+            paths
+        );
+    }
+
+    #[test]
+    fn test_scan_source_fstring_urls() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("pipeline.py"),
+            "resp = requests.get(f\"{svc_url}/v1/entities/estimates\")\n",
+        )
+        .unwrap();
+        let results = scan_source_for_urls(dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "/v1/entities/estimates");
+    }
+
+    #[test]
+    fn test_extract_http_method_from_line() {
+        assert_eq!(
+            extract_http_method_from_line("resp = requests.get(url)"),
+            Some("GET".to_string())
+        );
+        assert_eq!(
+            extract_http_method_from_line("resp = requests.post(url, json=data)"),
+            Some("POST".to_string())
+        );
+        assert_eq!(
+            extract_http_method_from_line("http.delete(f\"{base}/v1/users/{id}\")"),
+            Some("DELETE".to_string())
+        );
+        assert_eq!(
+            extract_http_method_from_line("fetch(url, {method: \"PUT\"})"),
+            Some("PUT".to_string())
+        );
+        assert_eq!(
+            extract_http_method_from_line("url = \"/v1/customers\""),
+            None
+        );
+    }
+
+    #[test]
+    fn test_scan_source_extracts_consumer_method() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("client.py"),
+            "resp = requests.get(f\"{svc_url}/v1/customers\")\n",
+        )
+        .unwrap();
+        let results = scan_source_for_urls(dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "/v1/customers");
+        assert_eq!(results[0].3, Some("GET".to_string()));
     }
 }
