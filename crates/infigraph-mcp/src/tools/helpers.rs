@@ -15,22 +15,31 @@ pub use super::session::{session_date_id, session_epoch};
 /// 4. Fall back to the original path (let downstream error).
 pub fn resolve_project_path(path: &str) -> String {
     let start = if path == "." {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        std::env::current_dir()
+            .and_then(|p| p.canonicalize())
+            .unwrap_or_else(|_| PathBuf::from("."))
     } else {
         PathBuf::from(path)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(path))
     };
 
+    // A project .infigraph/ contains a "graph" subdir but NOT registry.json.
+    // The global ~/.infigraph/ has registry.json — skip it during walk-up.
+    let is_project_infigraph = |p: &std::path::Path| {
+        let ig = p.join(".infigraph");
+        ig.join("graph").exists() && !ig.join("registry.json").exists()
+    };
+
     // Direct match
-    if start.join(".infigraph").is_dir() {
+    if is_project_infigraph(&start) {
         return start.to_string_lossy().to_string();
     }
 
     // Walk up (CWD is inside a project subdir)
     let mut current = start.as_path();
     while let Some(parent) = current.parent() {
-        if parent.join(".infigraph").is_dir() {
+        if is_project_infigraph(parent) {
             return parent.to_string_lossy().to_string();
         }
         current = parent;
@@ -38,10 +47,8 @@ pub fn resolve_project_path(path: &str) -> String {
 
     // Check registry for child projects under this path
     if let Ok(registry) = infigraph_core::multi::Registry::load() {
-        let start_str = start.to_string_lossy();
         for entry in registry.repos.values() {
-            let entry_str = entry.path.to_string_lossy();
-            if entry_str.starts_with(start_str.as_ref()) {
+            if entry.path.starts_with(&start) {
                 return entry.path.to_string_lossy().to_string();
             }
         }
