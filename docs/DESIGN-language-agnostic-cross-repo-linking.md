@@ -197,6 +197,33 @@ class span rather than the innermost method. Fix = resolve to the smallest enclo
 file, different mechanism); get explicit go-ahead before starting — the producer-path
 premise this doc opened with does not apply here.
 
+## Q7 — out of static scope (verified, attempted, reverted)
+
+Q7 ("QBO report filter schema, who reads it") stays unsolved at 11/12. The consumer is
+`ascendskills/tools/__init__.py::ToolsServer::register_api_tools`, which at runtime
+fetches `{ascend_svc_url}/openapi.json` and registers one MCP tool per route
+(`ascend_api.register`). It is a **query-blind wildcard consumer** of the *entire*
+ascend-service route surface — it has zero report-filters-specific text. Verified three
+ways:
+1. Per-repo search on ascend-skills for the Q7 query returns only `*.schema.json` files;
+   the consumer never surfaces (no route-specific text to match).
+2. `base_url` is runtime-configured — no static literal points at a specific route.
+3. The per-route tool names/descriptions are generated at runtime from the fetched spec.
+
+**Attempted fix (reverted):** a service-level wildcard edge
+`register_api_tools --CALLS_SERVICE(path='*')--> ascend-service`, surfaced via
+diversity-gated injection at low score. It failed the gate: the diversity swap promotes
+the starved repo's *best real hit* (`garden.schema.json`, 0.21), which outscores any
+principled low injection score. Raising the injection score to win the slot is the
+rejected floor-boost hack — and because the consumer is query-blind, any score that
+wins Q7 also sprays it across the ~9 questions with an ascend-service route in top-N.
+There is no query-agnostic score that fixes Q7 without regressing others. Reverted to
+the clean 11/12 (`3d9d7c0`).
+
+Note: how codebase-memory reportedly gets Q7 was never confirmed; the evidence above
+suggests plain retrieval cannot surface this consumer, so its mechanism remains an
+open question, not a target to match.
+
 ## Non-goals / constraints
 
 - **Do not touch the single-repo search path.** Diversity/scoring work stays in
