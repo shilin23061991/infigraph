@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -6,6 +7,16 @@ use serde_json::Value;
 
 use infigraph_core::watch::WatchEventKind;
 use infigraph_languages::bundled_registry;
+
+static WATCHERS_DISABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn disable_watchers() {
+    WATCHERS_DISABLED.store(true, Ordering::Relaxed);
+}
+
+pub fn watchers_disabled() -> bool {
+    WATCHERS_DISABLED.load(Ordering::Relaxed)
+}
 
 fn watch_log(level: &str, msg: &str) {
     use std::io::Write;
@@ -54,6 +65,9 @@ pub fn is_watching(path: &str) -> bool {
 }
 
 pub fn auto_start_watch(path: &str) -> Option<String> {
+    if watchers_disabled() {
+        return None;
+    }
     let root = std::path::PathBuf::from(path).canonicalize().ok()?;
     let root_str = root.to_string_lossy().replace('\\', "/");
 

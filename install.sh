@@ -62,6 +62,17 @@ if [[ "$GHE_HOST" != "github.com" ]]; then
   fi
 fi
 
+# Stop running MCP instances before replacing binaries.
+# Lock file auto-releases when process exits.
+stop_running_mcp() {
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f infigraph-mcp 2>/dev/null || true
+  elif command -v taskkill >/dev/null 2>&1; then
+    taskkill /IM infigraph-mcp.exe /F 2>/dev/null || true
+  fi
+  sleep 1
+}
+
 # Rename a running binary out of the way before overwriting.
 # On Unix cp usually works (old inode stays valid), but rename is safer
 # on NFS/CIFS mounts and matches the Windows install path.
@@ -106,7 +117,8 @@ try_prebuilt() {
 
     mkdir -p "$INSTALL_DIR"
 
-    # Rename running binaries before overwriting
+    # Stop running MCP and rename binaries before overwriting
+    stop_running_mcp
     move_running_binary "$INSTALL_DIR/infigraph${BIN_SUFFIX}"
     move_running_binary "$INSTALL_DIR/infigraph-mcp${BIN_SUFFIX}"
 
@@ -185,7 +197,8 @@ build_from_source() {
 
   mkdir -p "$INSTALL_DIR"
 
-  # Rename running binaries before overwriting
+  # Stop running MCP and rename binaries before overwriting
+  stop_running_mcp
   move_running_binary "$INSTALL_DIR/infigraph${BIN_SUFFIX}"
   move_running_binary "$INSTALL_DIR/infigraph-mcp${BIN_SUFFIX}"
 

@@ -1697,7 +1697,7 @@ pub fn cozo_schema_ddl() -> Vec<&'static str> {
 }
 
 const COZO_SCHEMA: &[&str] = &[
-    ":create symbol {id: String => name: String, kind: String, file: String, start_line: Int, end_line: Int, signature_hash: String default \"\", language: String default \"\", visibility: String default \"\", parent: String default \"\", docstring: String default \"\", complexity: Int default 1, parameters: String default \"\", return_type: String default \"\"}",
+    ":create symbol {id: String => name: String, kind: String, file: String, start_line: Int, end_line: Int, signature_hash: String default \"\", language: String default \"\", visibility: String default \"\", parent: String default \"\", docstring: String default \"\", complexity: Int default 1, parameters: String default \"\", return_type: String default \"\", category: String default \"impl\"}",
     ":create module {id: String => name: String, file: String, language: String, content_hash: String default \"\", summary: String default \"\"}",
     ":create cluster {id: String => name: String, description: String default \"\"}",
     ":create file {id: String => name: String, path: String, language: String, symbol_count: Int default 0}",

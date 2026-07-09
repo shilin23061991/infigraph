@@ -48,6 +48,9 @@ pub fn is_doc_watching(path: &str) -> bool {
 }
 
 pub fn auto_start_doc_watch(path: &str) -> Option<String> {
+    if super::watch::watchers_disabled() {
+        return None;
+    }
     let root = std::path::PathBuf::from(path).canonicalize().ok()?;
     let root_str = root.to_string_lossy().replace('\\', "/");
 

@@ -35,8 +35,6 @@ pub(crate) fn unwind_edges_from_pairs(
     }
 }
 
-/// Classify a file path into a category for search ranking.
-/// Returns one of: "impl", "test", "config", "docs".
 pub fn classify_file(file: &str) -> &'static str {
     let fl = file.to_ascii_lowercase();
     if fl.ends_with("-lock.yaml")
@@ -70,10 +68,64 @@ pub fn classify_file(file: &str) -> &'static str {
         || fl.contains(".test.")
         || fl.contains(".spec.")
         || fl.contains("/e2e/")
+        || fl.starts_with("e2e/")
         || fl.contains("/fixtures/")
+        || fl.starts_with("fixtures/")
         || fl.contains("/testdata/")
+        || fl.starts_with("testdata/")
+        || fl.starts_with("__tests__/")
+        || fl.starts_with("__mocks__/")
     {
         return "test";
     }
     "impl"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_file;
+
+    #[test]
+    fn impl_files() {
+        assert_eq!(classify_file("src/main.rs"), "impl");
+        assert_eq!(classify_file("lib/parser.py"), "impl");
+        assert_eq!(classify_file("cmd/server/handler.go"), "impl");
+    }
+
+    #[test]
+    fn test_files() {
+        assert_eq!(classify_file("src/tests/unit.rs"), "test");
+        assert_eq!(classify_file("test_parser.py"), "test");
+        assert_eq!(classify_file("src/__tests__/App.test.tsx"), "test");
+        assert_eq!(classify_file("src/handler.spec.ts"), "test");
+        assert_eq!(classify_file("e2e/login.test.js"), "test");
+        assert_eq!(classify_file("src/__mocks__/db.ts"), "test");
+        assert_eq!(classify_file("testdata/input.go"), "test");
+        assert_eq!(classify_file("src/fixtures/sample.py"), "test");
+    }
+
+    #[test]
+    fn test_yaml_json_files() {
+        assert_eq!(classify_file("tests/golden/expected.json"), "test");
+        assert_eq!(classify_file("eval/dataset.yaml"), "test");
+        assert_eq!(classify_file("fixtures/data.yml"), "test");
+        assert_eq!(classify_file("config/settings.yaml"), "config");
+        assert_eq!(classify_file("package.json"), "config");
+    }
+
+    #[test]
+    fn config_files() {
+        assert_eq!(classify_file("Cargo.lock"), "config");
+        assert_eq!(classify_file("pnpm-lock.yaml"), "config");
+        assert_eq!(classify_file("package-lock.json"), "config");
+        assert_eq!(classify_file("yarn.lock"), "config");
+        assert_eq!(classify_file("docker-compose.yml"), "config");
+    }
+
+    #[test]
+    fn docs_files() {
+        assert_eq!(classify_file("README.md"), "docs");
+        assert_eq!(classify_file("docs/api.md"), "docs");
+        assert_eq!(classify_file("doc/architecture.md"), "docs");
+    }
 }

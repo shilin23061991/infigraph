@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Write};
 
 use anyhow::Result;
+use fs2::FileExt;
 use serde_json::{json, Value};
 
 use infigraph_mcp::tools;
@@ -9,6 +10,163 @@ use infigraph_mcp::tools::watch::{auto_start_watch, init_watchers};
 use infigraph_mcp::web;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--worker") {
+        return run_worker();
+    }
+
+    // Supervisor mode: spawn self as --worker, monitor for segfault, auto-reindex
+    loop {
+        let exe = std::env::current_exe()?;
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("--worker");
+        for arg in args.iter().skip(1).filter(|a| *a != "--worker") {
+            cmd.arg(arg);
+        }
+        cmd.stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit());
+
+        let status = cmd.status()?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if status.signal() == Some(11) {
+                // SIGSEGV — likely corrupt DB, reindex all registered projects
+                mcp_log(
+                    "CRASH",
+                    "SIGSEGV detected — triggering auto-reindex of registered projects",
+                );
+                eprintln!("infigraph-mcp: crash detected (SIGSEGV), auto-reindexing...");
+                auto_reindex_all();
+                // Respawn worker after reindex
+                continue;
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            if let Some(code) = status.code() {
+                if code < 0 {
+                    // Negative exit code on Windows = unhandled exception (e.g. access violation)
+                    mcp_log(
+                        "CRASH",
+                        &format!("Crash detected (exit {code}) — triggering auto-reindex"),
+                    );
+                    eprintln!("infigraph-mcp: crash detected, auto-reindexing...");
+                    auto_reindex_all();
+                    continue;
+                }
+            }
+        }
+
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn auto_reindex_all() {
+    let cli = find_infigraph_cli_for_reindex();
+    let cli_path = match cli {
+        Some(p) => p,
+        None => {
+            mcp_log("ERROR", "Cannot find infigraph CLI for auto-reindex");
+            return;
+        }
+    };
+
+    let registry = match infigraph_core::multi::Registry::load() {
+        Ok(r) => r,
+        Err(e) => {
+            mcp_log(
+                "ERROR",
+                &format!("Registry load failed during reindex: {e}"),
+            );
+            return;
+        }
+    };
+
+    // Reindex individual projects
+    for entry in registry.repos.values() {
+        let path = &entry.path;
+        if !path.join(".infigraph").exists() {
+            continue;
+        }
+        reindex_path(&cli_path, path);
+    }
+
+    // Reindex group combined graphs
+    let groups_dir = std::env::var("HOME")
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".infigraph")
+                .join("groups")
+        })
+        .ok();
+    if let Some(ref gd) = groups_dir {
+        if let Ok(entries) = std::fs::read_dir(gd) {
+            for entry in entries.flatten() {
+                let group_path = entry.path();
+                if group_path.join(".infigraph").exists() {
+                    reindex_path(&cli_path, &group_path);
+                }
+            }
+        }
+    }
+}
+
+fn reindex_path(cli_path: &std::path::Path, path: &std::path::Path) {
+    let path_str = path.to_string_lossy().to_string();
+    mcp_log("INFO", &format!("Auto-reindexing: {path_str}"));
+
+    let graph_path = path.join(".infigraph").join("graph");
+    if graph_path.exists() {
+        let _ = std::fs::remove_file(&graph_path);
+        let _ = std::fs::remove_dir_all(&graph_path);
+    }
+    let wal_path = path.join(".infigraph").join("graph.wal");
+    let _ = std::fs::remove_file(&wal_path);
+
+    let result = std::process::Command::new(cli_path)
+        .arg("index")
+        .current_dir(path)
+        .status();
+    match result {
+        Ok(s) if s.success() => mcp_log("INFO", &format!("Reindex OK: {path_str}")),
+        Ok(s) => mcp_log(
+            "ERROR",
+            &format!("Reindex failed (exit {:?}): {path_str}", s.code()),
+        ),
+        Err(e) => mcp_log("ERROR", &format!("Reindex spawn failed: {e}")),
+    }
+}
+
+fn find_infigraph_cli_for_reindex() -> Option<std::path::PathBuf> {
+    let bin_name = if cfg!(windows) {
+        "infigraph.exe"
+    } else {
+        "infigraph"
+    };
+    // Check next to current exe
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.parent()?.join(bin_name);
+        if sibling.exists() {
+            return Some(sibling);
+        }
+    }
+    // Check common install locations
+    let home = std::env::var("HOME").ok().map(std::path::PathBuf::from);
+    if let Some(ref h) = home {
+        let local_bin = h.join(".local").join("bin").join(bin_name);
+        if local_bin.exists() {
+            return Some(local_bin);
+        }
+    }
+    None
+}
+
+fn run_worker() -> Result<()> {
     install_panic_hook();
 
     let _ = rayon::ThreadPoolBuilder::new()
@@ -69,7 +227,45 @@ fn install_panic_hook() {
     }));
 }
 
+fn acquire_instance_lock() -> Option<std::fs::File> {
+    let lock_path = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".infigraph")
+        .join("mcp.lock");
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .ok()?;
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            mcp_log("INFO", "Acquired MCP instance lock");
+            Some(file)
+        }
+        Err(_) => {
+            mcp_log(
+                "WARN",
+                "Another MCP instance holds the lock — running without watchers",
+            );
+            None
+        }
+    }
+}
+
 fn run() -> Result<()> {
+    let instance_lock = acquire_instance_lock();
+    let is_primary = instance_lock.is_some();
+    let _lock_guard = instance_lock;
+
+    if !is_primary {
+        infigraph_mcp::tools::watch::disable_watchers();
+    }
+
     let args: Vec<String> = std::env::args().collect();
     let ui_enabled = args
         .iter()
@@ -138,7 +334,7 @@ fn run() -> Result<()> {
         mcp_log("DEBUG", &format!("method={method}"));
 
         let response = match method {
-            "initialize" => handle_initialize(&id),
+            "initialize" => handle_initialize(&id, is_primary),
             "tools/list" => handle_tools_list(&id),
             "tools/call" => {
                 let tool = request
@@ -180,38 +376,41 @@ fn write_response(stdout: &io::Stdout, response: Value) -> Result<()> {
     Ok(())
 }
 
-fn handle_initialize(id: &Value) -> Value {
-    mcp_log("INFO", "initialize called");
-    // Auto-start watchers for all registered projects
-    std::thread::spawn(|| {
-        mcp_log("DEBUG", "init_watchers start");
-        init_watchers();
-        mcp_log("DEBUG", "init_doc_watchers start");
-        init_doc_watchers();
+fn handle_initialize(id: &Value, is_primary: bool) -> Value {
+    mcp_log("INFO", &format!("initialize called (primary={is_primary})"));
+    if is_primary {
+        std::thread::spawn(|| {
+            mcp_log("DEBUG", "init_watchers start");
+            init_watchers();
+            mcp_log("DEBUG", "init_doc_watchers start");
+            init_doc_watchers();
 
-        let registry = match infigraph_core::multi::Registry::load() {
-            Ok(r) => {
-                mcp_log(
-                    "DEBUG",
-                    &format!("registry loaded: {} repos", r.repos.len()),
-                );
-                r
-            }
-            Err(e) => {
-                mcp_log("ERROR", &format!("registry load failed: {e}"));
-                return;
-            }
-        };
+            let registry = match infigraph_core::multi::Registry::load() {
+                Ok(r) => {
+                    mcp_log(
+                        "DEBUG",
+                        &format!("registry loaded: {} repos", r.repos.len()),
+                    );
+                    r
+                }
+                Err(e) => {
+                    mcp_log("ERROR", &format!("registry load failed: {e}"));
+                    return;
+                }
+            };
 
-        for entry in registry.repos.values() {
-            let path = entry.path.to_string_lossy().to_string();
-            if !entry.path.join(".infigraph").exists() {
-                continue;
+            for entry in registry.repos.values() {
+                let path = entry.path.to_string_lossy().to_string();
+                if !entry.path.join(".infigraph").exists() {
+                    continue;
+                }
+                auto_start_watch(&path);
+                auto_start_doc_watch(&path);
             }
-            auto_start_watch(&path);
-            auto_start_doc_watch(&path);
-        }
-    });
+        });
+    } else {
+        mcp_log("INFO", "Skipping watchers — not primary instance");
+    }
 
     json!({
         "jsonrpc": "2.0",
