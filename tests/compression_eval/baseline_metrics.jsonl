@@ -1,0 +1,20 @@
+{"args_summary":"authentication handler","output_tokens":363,"timestamp":1783672259,"tool":"search"}
+{"args_summary":"route definition detect_routes","output_tokens":755,"timestamp":1783672262,"tool":"search"}
+{"args_summary":"config load toml settings","output_tokens":328,"timestamp":1783672264,"tool":"search"}
+{"args_summary":"test","output_tokens":716,"timestamp":1783672266,"tool":"search"}
+{"args_summary":"error handling Result Err anyhow","output_tokens":626,"timestamp":1783672268,"tool":"search"}
+{"args_summary":"","output_tokens":567,"timestamp":1783672277,"tool":"get_doc_context"}
+{"args_summary":"","output_tokens":159,"timestamp":1783672283,"tool":"find_all_references"}
+{"args_summary":"","output_tokens":66,"timestamp":1783672290,"tool":"get_doc_context"}
+{"args_summary":"","output_tokens":671,"timestamp":1783672296,"tool":"get_doc_context"}
+{"args_summary":"","output_tokens":1722,"timestamp":1783672303,"tool":"get_doc_context"}
+{"args_summary":"","output_tokens":159,"timestamp":1783672310,"tool":"find_all_references"}
+{"args_summary":"","output_tokens":567,"timestamp":1783672316,"tool":"get_doc_context"}
+{"args_summary":"","output_tokens":5,"timestamp":1783672323,"tool":"trace_callers"}
+{"args_summary":"","output_tokens":24,"timestamp":1783672330,"tool":"find_all_references"}
+{"args_summary":"","output_tokens":2,"timestamp":1783672336,"tool":"trace_callers"}
+{"args_summary":"","output_tokens":7,"timestamp":1783672343,"tool":"trace_callees"}
+{"args_summary":"","output_tokens":35,"timestamp":1783672350,"tool":"trace_callees"}
+{"args_summary":"","output_tokens":210,"timestamp":1783672356,"tool":"transitive_impact"}
+{"args_summary":"","output_tokens":363,"timestamp":1783672364,"tool":"get_architecture"}
+{"args_summary":"","output_tokens":10,"timestamp":1783672371,"tool":"transitive_impact"}

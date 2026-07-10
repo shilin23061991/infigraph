@@ -29,16 +29,35 @@ pub fn compress_tool_output_with_level(
     if should_bypass(tool_name, args, raw) {
         return raw.to_string();
     }
+    let effective = effective_level(tool_name, level);
+    if effective == CompressionLevel::Off {
+        return raw.to_string();
+    }
     match tool_name {
-        "search" => compress_search(raw, args, level),
-        "get_doc_context" => compress_doc_context(raw, args, level),
-        "find_all_references" => compress_references(raw, args, level),
-        "get_architecture" => compress_architecture(raw, args, level),
+        "search" => compress_search(raw, args, effective),
+        "get_doc_context" => compress_doc_context(raw, args, effective),
+        "find_all_references" => compress_references(raw, args, effective),
+        "get_architecture" => compress_architecture(raw, args, effective),
         "list_files" => compress_list_files(raw, args),
         "detect_dead_code" => compress_dead_code(raw, args),
-        "get_api_surface" => compress_api_surface(raw, args, level),
+        "get_api_surface" => compress_api_surface(raw, args, effective),
         "git_summary" => compress_git_summary(raw, args),
         _ => raw.to_string(),
+    }
+}
+
+/// Cap compression level per tool based on eval quality results.
+/// Search degrades at Aggressive (top-3 drops important results).
+/// All other tools retain 100% quality through Minimal.
+fn effective_level(tool_name: &str, level: CompressionLevel) -> CompressionLevel {
+    let max_level = match tool_name {
+        "search" => CompressionLevel::Summary,
+        _ => CompressionLevel::Minimal,
+    };
+    if level > max_level {
+        max_level
+    } else {
+        level
     }
 }
 
@@ -1612,6 +1631,30 @@ Callees (3):
         let result =
             compress_tool_output_with_level(&raw, "search", &json!({}), CompressionLevel::Off);
         assert_eq!(result, raw);
+    }
+
+    #[test]
+    fn test_effective_level_caps_search() {
+        assert_eq!(
+            effective_level("search", CompressionLevel::Aggressive),
+            CompressionLevel::Summary
+        );
+        assert_eq!(
+            effective_level("search", CompressionLevel::Minimal),
+            CompressionLevel::Summary
+        );
+        assert_eq!(
+            effective_level("search", CompressionLevel::Summary),
+            CompressionLevel::Summary
+        );
+        assert_eq!(
+            effective_level("get_doc_context", CompressionLevel::Aggressive),
+            CompressionLevel::Aggressive
+        );
+        assert_eq!(
+            effective_level("get_doc_context", CompressionLevel::Minimal),
+            CompressionLevel::Minimal
+        );
     }
 
     #[test]

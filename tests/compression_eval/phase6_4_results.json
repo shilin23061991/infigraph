@@ -1,0 +1,755 @@
+{
+  "version": 2,
+  "phase": "6.4",
+  "tasks": [
+    {
+      "id": "S1",
+      "tool": "search",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 354,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 174,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 174,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 174,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "S2",
+      "tool": "search",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 904,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 657,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 657,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 657,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "S3",
+      "tool": "search",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 368,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 188,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 188,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 188,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "S4",
+      "tool": "search",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 658,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 284,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 284,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 284,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "S5",
+      "tool": "search",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 367,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 181,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 181,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 181,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "E1",
+      "tool": "get_doc_context",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 580,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 36,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 36,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 43,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "E2",
+      "tool": "find_all_references",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 158,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 70,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 70,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 17,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "E3",
+      "tool": "get_doc_context",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 66,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 66,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 66,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 66,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "E4",
+      "tool": "get_doc_context",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 671,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 122,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 60,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 52,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "E5",
+      "tool": "get_doc_context",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 1722,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 113,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 60,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 52,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "R1",
+      "tool": "find_all_references",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 158,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 70,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 70,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 17,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "R2",
+      "tool": "get_doc_context",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 580,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 36,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 36,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 43,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "R3",
+      "tool": "trace_callers",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_query_graph"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_query_graph"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_query_graph"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_query_graph"
+          ],
+          "has_content": false
+        }
+      }
+    },
+    {
+      "id": "R4",
+      "tool": "find_all_references",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 24,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 24,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 24,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 24,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "R5",
+      "tool": "trace_callers",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_list_languages"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_list_languages"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_list_languages"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_list_languages"
+          ],
+          "has_content": false
+        }
+      }
+    },
+    {
+      "id": "U1",
+      "tool": "trace_callees",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        }
+      }
+    },
+    {
+      "id": "U2",
+      "tool": "trace_callees",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_search"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_search"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_search"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_search"
+          ],
+          "has_content": false
+        }
+      }
+    },
+    {
+      "id": "U3",
+      "tool": "transitive_impact",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_index_project"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_index_project"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_index_project"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "tool_index_project"
+          ],
+          "has_content": false
+        }
+      }
+    },
+    {
+      "id": "U4",
+      "tool": "get_architecture",
+      "level_sensitive": true,
+      "levels": {
+        "off": {
+          "tokens": 363,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "summary": {
+          "tokens": 165,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "aggressive": {
+          "tokens": 132,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        },
+        "minimal": {
+          "tokens": 90,
+          "retention": 1.0,
+          "missing": [],
+          "has_content": true
+        }
+      }
+    },
+    {
+      "id": "U5",
+      "tool": "transitive_impact",
+      "level_sensitive": false,
+      "levels": {
+        "off": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "summary": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "aggressive": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        },
+        "minimal": {
+          "tokens": 4,
+          "retention": 0.0,
+          "missing": [
+            "dispatch_tool"
+          ],
+          "has_content": false
+        }
+      }
+    }
+  ],
+  "level_totals": {
+    "off": {
+      "tokens": 6973,
+      "count": 14
+    },
+    "summary": {
+      "tokens": 2186,
+      "count": 14
+    },
+    "aggressive": {
+      "tokens": 2038,
+      "count": 14
+    },
+    "minimal": {
+      "tokens": 1888,
+      "count": 14
+    }
+  },
+  "level_retention_avg": {
+    "off": 0.7,
+    "summary": 0.7,
+    "aggressive": 0.7,
+    "minimal": 0.7
+  },
+  "cliff_tasks": [
+    {
+      "task": "R3",
+      "tool": "trace_callers",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "tool_query_graph"
+      ]
+    },
+    {
+      "task": "R5",
+      "tool": "trace_callers",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "tool_list_languages"
+      ]
+    },
+    {
+      "task": "U1",
+      "tool": "trace_callees",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "dispatch_tool"
+      ]
+    },
+    {
+      "task": "U2",
+      "tool": "trace_callees",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "tool_search"
+      ]
+    },
+    {
+      "task": "U3",
+      "tool": "transitive_impact",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "tool_index_project"
+      ]
+    },
+    {
+      "task": "U5",
+      "tool": "transitive_impact",
+      "level": "summary",
+      "retention": 0.0,
+      "missing": [
+        "dispatch_tool"
+      ]
+    }
+  ],
+  "safe_level": "minimal"
+}

@@ -89,10 +89,26 @@ fn estimate_tokens(s: &str) -> usize {
 }
 
 /// Get current compression level based on token budget usage.
+/// Override with `INFIGRAPH_COMPRESSION_LEVEL=off|summary|aggressive|minimal`.
 pub fn get_compression_level() -> CompressionLevel {
+    if let Some(level) = parse_level_override() {
+        return level;
+    }
     let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     let ctx = guard.get_or_insert_with(SessionContext::new);
     ctx.auto_level()
+}
+
+fn parse_level_override() -> Option<CompressionLevel> {
+    std::env::var("INFIGRAPH_COMPRESSION_LEVEL")
+        .ok()
+        .and_then(|v| match v.to_lowercase().as_str() {
+            "off" => Some(CompressionLevel::Off),
+            "summary" => Some(CompressionLevel::Summary),
+            "aggressive" => Some(CompressionLevel::Aggressive),
+            "minimal" => Some(CompressionLevel::Minimal),
+            _ => None,
+        })
 }
 
 /// Record tokens sent and return updated compression level.

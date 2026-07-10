@@ -1,0 +1,187 @@
+{
+  "version": 2,
+  "description": "Phase 6.4 eval — 4-level compression quality sweep",
+  "notes": "must_contain: strings that MUST appear in output for task to be answerable. level_sensitive: true if tool has per-level compression in compress.rs",
+  "tasks": [
+    {
+      "id": "S1",
+      "category": "search",
+      "description": "Find where authentication is handled",
+      "tool": "search",
+      "args": { "query": "authentication handler", "limit": 10 },
+      "level_sensitive": true,
+      "must_contain": ["check_credentials", "auth.py", "generate_route_handler_edges"]
+    },
+    {
+      "id": "S2",
+      "category": "search",
+      "description": "Find all API route definitions",
+      "tool": "search",
+      "args": { "query": "route definition", "kind": "Function", "limit": 20 },
+      "level_sensitive": true,
+      "must_contain": ["is_route_decorator", "extract_contracts", "normalize_route_path"]
+    },
+    {
+      "id": "S3",
+      "category": "search",
+      "description": "Find configuration loading code",
+      "tool": "search",
+      "args": { "query": "config load", "limit": 10 },
+      "level_sensitive": true,
+      "must_contain": ["load_config", "detect_config_bindings", "config/mod.rs"]
+    },
+    {
+      "id": "S4",
+      "category": "search",
+      "description": "Find test files for a module",
+      "tool": "search",
+      "args": { "query": "test", "file_pattern": "*test*", "limit": 20 },
+      "level_sensitive": true,
+      "must_contain": ["test_check_security", "check_integration.rs"]
+    },
+    {
+      "id": "S5",
+      "category": "search",
+      "description": "Find error handling patterns",
+      "tool": "search",
+      "args": { "query": "error handling Result Err", "limit": 10 },
+      "level_sensitive": true,
+      "must_contain": ["dispatch_tool", "resolve_calls"]
+    },
+    {
+      "id": "E1",
+      "category": "edit",
+      "description": "Understand dispatch_tool for editing",
+      "tool": "get_doc_context",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/lib.rs::dispatch_tool" },
+      "level_sensitive": true,
+      "must_contain": ["dispatch_tool", "lib.rs", "Complexity"]
+    },
+    {
+      "id": "E2",
+      "category": "edit",
+      "description": "Find all references to tool_search for refactor",
+      "tool": "find_all_references",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/search.rs::tool_search" },
+      "level_sensitive": true,
+      "must_contain": ["tool_search", "references"]
+    },
+    {
+      "id": "E3",
+      "category": "edit",
+      "description": "Understand tool_get_stats for type change",
+      "tool": "get_doc_context",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/graph.rs::tool_get_stats" },
+      "level_sensitive": true,
+      "must_contain": ["tool_get_stats", "graph.rs"]
+    },
+    {
+      "id": "E4",
+      "category": "edit",
+      "description": "Understand tool_index_project for error handling",
+      "tool": "get_doc_context",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/index.rs::tool_index_project" },
+      "level_sensitive": true,
+      "must_contain": ["tool_index_project", "index.rs"]
+    },
+    {
+      "id": "E5",
+      "category": "edit",
+      "description": "Understand tool_search for validation",
+      "tool": "get_doc_context",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/search.rs::tool_search" },
+      "level_sensitive": true,
+      "must_contain": ["tool_search", "search.rs", "Callers"]
+    },
+    {
+      "id": "R1",
+      "category": "refactor",
+      "description": "Find all references for rename",
+      "tool": "find_all_references",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/search.rs::tool_search" },
+      "level_sensitive": true,
+      "must_contain": ["tool_search", "references"]
+    },
+    {
+      "id": "R2",
+      "category": "refactor",
+      "description": "Understand dispatch_tool for extraction",
+      "tool": "get_doc_context",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/lib.rs::dispatch_tool" },
+      "level_sensitive": true,
+      "must_contain": ["dispatch_tool", "lib.rs", "Callers"]
+    },
+    {
+      "id": "R3",
+      "category": "refactor",
+      "description": "Trace callers of query_graph for move",
+      "tool": "trace_callers",
+      "args": { "symbol": "tool_query_graph", "depth": 2 },
+      "level_sensitive": false,
+      "must_contain": ["tool_query_graph"]
+    },
+    {
+      "id": "R4",
+      "category": "refactor",
+      "description": "Find all references for signature change",
+      "tool": "find_all_references",
+      "args": { "symbol_id": "crates/infigraph-mcp/src/tools/graph.rs::tool_get_code_snippet" },
+      "level_sensitive": true,
+      "must_contain": ["tool_get_code_snippet", "references"]
+    },
+    {
+      "id": "R5",
+      "category": "refactor",
+      "description": "Trace callers of list_languages for dead code",
+      "tool": "trace_callers",
+      "args": { "symbol": "tool_list_languages", "depth": 3 },
+      "level_sensitive": false,
+      "must_contain": ["tool_list_languages"]
+    },
+    {
+      "id": "U1",
+      "category": "understand",
+      "description": "Explain tool dispatch flow",
+      "tool": "trace_callees",
+      "args": { "symbol": "dispatch_tool", "depth": 2 },
+      "level_sensitive": false,
+      "must_contain": ["dispatch_tool"]
+    },
+    {
+      "id": "U2",
+      "category": "understand",
+      "description": "Trace search query to results",
+      "tool": "trace_callees",
+      "args": { "symbol": "tool_search", "depth": 3 },
+      "level_sensitive": false,
+      "must_contain": ["tool_search"]
+    },
+    {
+      "id": "U3",
+      "category": "understand",
+      "description": "Downstream dependencies of indexing",
+      "tool": "transitive_impact",
+      "args": { "symbol": "tool_index_project" },
+      "level_sensitive": false,
+      "must_contain": ["tool_index_project"]
+    },
+    {
+      "id": "U4",
+      "category": "understand",
+      "description": "Architecture overview",
+      "tool": "get_architecture",
+      "args": {},
+      "level_sensitive": true,
+      "must_contain": ["rust", "Function", "Language Breakdown"]
+    },
+    {
+      "id": "U5",
+      "category": "understand",
+      "description": "Blast radius of changing dispatch_tool",
+      "tool": "transitive_impact",
+      "args": { "symbol": "dispatch_tool" },
+      "level_sensitive": false,
+      "must_contain": ["dispatch_tool"]
+    }
+  ]
+}

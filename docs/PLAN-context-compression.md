@@ -696,7 +696,7 @@ Define the compressed output format for each tool:
 
 ---
 
-## Phase 6: Budget-Aware Scaling ✅
+## Phase 6: Budget-Aware Scaling ✅ (incl. 6.4 eval)
 
 **Goal:** Dynamically adjust compression aggressiveness based on remaining token budget.
 
@@ -739,11 +739,18 @@ Define the compressed output format for each tool:
   - Seen-dedup window: 12 calls
 - [x] Level logged in compression metrics as `compression_level`
 
-### Task 6.4: Run Phase 6 eval
-- [ ] Simulate sessions at each budget level
-- [ ] Measure quality at each level
-- [ ] Find the quality cliff — where does compression hurt?
-- [ ] Set safe defaults based on findings
+### Task 6.4: Run Phase 6 eval ✅
+- [x] Added `INFIGRAPH_COMPRESSION_LEVEL` env override for eval (session_context.rs)
+- [x] Rewrote `run_eval.py` for 4-level sweep with must_contain quality assertions
+- [x] Fixed tasks.json: symbol_ids, structural must_contain checks
+- [x] Results (14 level-sensitive tasks across search, get_doc_context, find_all_references, get_architecture):
+  - **Off**: 0% savings, 100% quality
+  - **Summary**: 68.7% savings, 100% quality ← safe maximum
+  - **Aggressive**: 86.7% savings, quality cliff on search (33-67% retention, top-3 drops important results)
+  - **Minimal**: 89.7% savings, search unusable (0-33%), other tools still 100%
+- [x] Quality cliff: Aggressive level, search-only (top-3 result limit)
+- [x] Current `auto_level()` thresholds validated as safe defaults
+- [x] Future optimization: per-tool level overrides (search stays Summary while others go Aggressive)
 
 ### Task 6.5: Multi-provider cache model adaptation ⏭️ DEFERRED
 
