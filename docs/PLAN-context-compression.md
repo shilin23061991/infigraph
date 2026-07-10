@@ -625,9 +625,11 @@ Define the compressed output format for each tool:
 
 ---
 
-## Phase 5: Cross-Agent Context Sharing
+## Phase 5: Cross-Agent Context Sharing ⏭️ SKIPPED
 
 **Goal:** When subagents are spawned (via Agent tool or workflows), pass compressed context instead of full replay. Eliminate redundant work across agents working on the same codebase.
+
+**Why skipped:** Not feasible server-side. MCP protocol carries no agent identifier (only tool name + arguments). Server cannot distinguish which agent is calling, making provenance tracking (5.3) and agent-specific dedup (5.4) impossible. Additionally, we don't control subagent spawning (5.2) — Claude Code does. Process model (shared vs separate MCP instances per agent) is also unclear, making in-memory SharedContext unreliable.
 
 ### Task 5.1: SharedContext store
 
@@ -694,41 +696,48 @@ Define the compressed output format for each tool:
 
 ---
 
-## Phase 6: Budget-Aware Scaling
+## Phase 6: Budget-Aware Scaling ✅
 
 **Goal:** Dynamically adjust compression aggressiveness based on remaining token budget.
 
-### Task 6.1: Token budget tracking
+### Task 6.1: Token budget tracking ✅
 
-- [ ] Add `token_budget` field to `CompressionConfig`
-- [ ] Track cumulative tokens sent across the session
-- [ ] Estimate remaining budget: `budget - total_sent`
-- [ ] Default budget: 150k tokens (typical Claude context before compaction)
+- [x] Add `token_budget` + `total_tokens_sent` fields to `SessionContext`
+- [x] Track cumulative tokens sent via `track_tokens()` called from `handle_tools_call`
+- [x] Estimate remaining budget: `budget - total_sent`
+- [x] Default budget: 150k tokens (configurable via `INFIGRAPH_TOKEN_BUDGET` env var)
 
-### Task 6.2: Adaptive compression levels
+### Task 6.2: Adaptive compression levels ✅
 
-- [ ] Define budget thresholds:
+- [x] Define budget thresholds:
   ```
   > 70% remaining: level = Off (no compression needed)
   50-70% remaining: level = Summary (default compression)
   20-50% remaining: level = Aggressive (shorter summaries, more dedup)
   < 20% remaining: level = Minimal (one-line per result, max dedup)
   ```
-- [ ] Implement `auto_level(budget_remaining_pct) -> CompressionLevel`
+- [x] Implement `auto_level()` on `SessionContext`
+- [x] Public `get_compression_level()` and `track_tokens()` API
 
-### Task 6.3: Per-level compression rules
+### Task 6.3: Per-level compression rules ✅
 
-- [ ] **Off**: pass through raw output
-- [ ] **Summary**: current Phase 1 summary formats
-- [ ] **Aggressive**:
-  - Search: top-3 results, one line each
-  - Callers: count + top-3 names only
-  - Architecture: language counts only
-  - Seen-threshold: 5 turns (more aggressive dedup)
-- [ ] **Minimal**:
-  - Search: `"5 results, top: auth.rs::login (0.95)"`
-  - Callers: `"12 callers in 5 files"`
-  - Seen-threshold: 3 turns
+- [x] **Off**: pass through raw output (bypass all compressors)
+- [x] **Summary**: existing Phase 2/4 compression (all callers/callees, all results)
+- [x] **Aggressive**:
+  - Search: top-3 results, drop text/doc matches
+  - Doc context: top-3 callers/callees
+  - Architecture: top-3 languages/hotspots/hubs
+  - References: grouped by file (unchanged from Summary)
+  - API surface: collapsed per-file (unchanged from Summary)
+  - Seen-dedup window: 8 calls (vs default 6)
+- [x] **Minimal**:
+  - Search: top-1 result only, no text/doc matches
+  - Doc context: 0 callers/callees (count only)
+  - Architecture: top-2 languages, no hotspots/hubs
+  - References: count + file count only
+  - API surface: count + file count only
+  - Seen-dedup window: 12 calls
+- [x] Level logged in compression metrics as `compression_level`
 
 ### Task 6.4: Run Phase 6 eval
 - [ ] Simulate sessions at each budget level
@@ -736,31 +745,15 @@ Define the compressed output format for each tool:
 - [ ] Find the quality cliff — where does compression hurt?
 - [ ] Set safe defaults based on findings
 
-### Task 6.5: Multi-provider cache model adaptation
+### Task 6.5: Multi-provider cache model adaptation ⏭️ DEFERRED
 
-- [ ] Anthropic: prefix-based KV cache, 5min TTL, 90% discount on cached tokens
-- [ ] OpenAI: similar prefix caching, different TTL and pricing
-- [ ] Google Gemini: context caching via explicit API, different model
-- [ ] Define `CacheModel` enum:
-  ```rust
-  enum CacheModel {
-      AnthropicPrefix { ttl_secs: u64 },
-      OpenAIPrefix { ttl_secs: u64 },
-      GeminiExplicit { cache_id: String },
-      Unknown,  // conservative: assume no caching
-  }
-  ```
-- [ ] Auto-detect provider from MCP client metadata or config
-- [ ] Adjust compression strategy per provider:
-  - Anthropic: compress only live zone (prefix caching)
-  - OpenAI: similar to Anthropic
-  - Gemini: can compress more aggressively (explicit cache means we control what's cached)
-  - Unknown: compress everything (safe default)
-- [ ] Add `provider` field to compression metrics
+- MCP protocol doesn't expose provider metadata, making auto-detection impossible
+- Deferred until MCP spec adds client capability negotiation
 
 ### Deliverable
-- Budget-aware auto-scaling
-- Quality measurements per compression level
+- ✅ Budget-aware auto-scaling with 4 compression levels
+- ✅ 9 new tests (4 session_context + 8 compress level tests) — 62 total passing
+- Eval pending (Task 6.4)
 
 ---
 

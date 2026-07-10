@@ -465,9 +465,10 @@ fn handle_tools_call(id: &Value, request: &Value) -> Value {
                 infigraph_mcp::compress::compress_tool_output(&content, tool_name, &args);
             let compressed =
                 infigraph_mcp::session_context::apply_seen_dedup(&compressed, tool_name, &args);
+            let comp_tokens = estimate_tokens(&compressed);
+            let level = infigraph_mcp::session_context::track_tokens(comp_tokens);
             if metrics_enabled {
                 let raw_tokens = estimate_tokens(&content);
-                let comp_tokens = estimate_tokens(&compressed);
                 let ratio = if raw_tokens > 0 {
                     comp_tokens as f64 / raw_tokens as f64
                 } else {
@@ -493,6 +494,7 @@ fn handle_tools_call(id: &Value, request: &Value) -> Value {
                     "raw_tokens": raw_tokens,
                     "compressed_tokens": comp_tokens,
                     "compression_ratio": (ratio * 100.0).round() / 100.0,
+                    "compression_level": format!("{:?}", level),
                     "detail_requested": detail,
                     "args_summary": args_summary,
                 });

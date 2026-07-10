@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use serde_json::Value;
 
 const DEFAULT_STALENESS_WINDOW: usize = 6;
+const DEFAULT_TOKEN_BUDGET: usize = 150_000;
 
 static SESSION: Mutex<Option<SessionContext>> = Mutex::new(None);
 
@@ -13,18 +14,49 @@ struct SeenEntry {
     tokens_sent: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CompressionLevel {
+    Off,
+    Summary,
+    Aggressive,
+    Minimal,
+}
+
 struct SessionContext {
     seen: HashMap<String, SeenEntry>,
     call_counter: usize,
     staleness_window: usize,
+    total_tokens_sent: usize,
+    token_budget: usize,
 }
 
 impl SessionContext {
     fn new() -> Self {
+        let budget = std::env::var("INFIGRAPH_TOKEN_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_TOKEN_BUDGET);
         Self {
             seen: HashMap::new(),
             call_counter: 0,
             staleness_window: DEFAULT_STALENESS_WINDOW,
+            total_tokens_sent: 0,
+            token_budget: budget,
+        }
+    }
+
+    fn auto_level(&self) -> CompressionLevel {
+        if self.token_budget == 0 {
+            return CompressionLevel::Summary;
+        }
+        let remaining_pct = ((self.token_budget.saturating_sub(self.total_tokens_sent)) as f64
+            / self.token_budget as f64
+            * 100.0) as usize;
+        match remaining_pct {
+            71..=100 => CompressionLevel::Off,
+            50..=70 => CompressionLevel::Summary,
+            20..=49 => CompressionLevel::Aggressive,
+            _ => CompressionLevel::Minimal,
         }
     }
 }
@@ -56,6 +88,21 @@ fn estimate_tokens(s: &str) -> usize {
     ((s.split_whitespace().count() as f64) * 1.4).ceil() as usize
 }
 
+/// Get current compression level based on token budget usage.
+pub fn get_compression_level() -> CompressionLevel {
+    let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let ctx = guard.get_or_insert_with(SessionContext::new);
+    ctx.auto_level()
+}
+
+/// Record tokens sent and return updated compression level.
+pub fn track_tokens(tokens: usize) -> CompressionLevel {
+    let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let ctx = guard.get_or_insert_with(SessionContext::new);
+    ctx.total_tokens_sent += tokens;
+    ctx.auto_level()
+}
+
 /// Apply seen-dedup to already-compressed tool output.
 /// Returns the output unchanged if dedup is disabled or content is fresh.
 pub fn apply_seen_dedup(compressed: &str, tool_name: &str, args: &Value) -> String {
@@ -74,7 +121,6 @@ pub fn apply_seen_dedup(compressed: &str, tool_name: &str, args: &Value) -> Stri
 
     let key = content_key(tool_name, args);
     if key.ends_with(':') {
-        // No meaningful identifier — can't dedup
         return compressed.to_string();
     }
 
@@ -85,9 +131,16 @@ pub fn apply_seen_dedup(compressed: &str, tool_name: &str, args: &Value) -> Stri
     ctx.call_counter += 1;
     let current_call = ctx.call_counter;
 
+    let effective_window = match ctx.auto_level() {
+        CompressionLevel::Off => ctx.staleness_window,
+        CompressionLevel::Summary => ctx.staleness_window,
+        CompressionLevel::Aggressive => ctx.staleness_window.max(8),
+        CompressionLevel::Minimal => ctx.staleness_window.max(12),
+    };
+
     if let Some(entry) = ctx.seen.get(&key) {
         let age = current_call - entry.call_seen;
-        if entry.content_hash == hash && age <= ctx.staleness_window {
+        if entry.content_hash == hash && age <= effective_window {
             // Same content, still fresh — return compact placeholder
             let placeholder = format!(
                 "(seen {} call{} ago: {key}, {} tokens — use detail=true to force full output)",
@@ -139,6 +192,7 @@ mod tests {
         let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_session();
         std::env::set_var("INFIGRAPH_DEDUP", "1");
+        std::env::remove_var("INFIGRAPH_TOKEN_BUDGET");
         guard
     }
 
@@ -267,5 +321,61 @@ mod tests {
         // Call 10: foo again — should still be fresh (refreshed at call 5)
         let result2 = apply_seen_dedup(&output, "get_doc_context", &args);
         assert!(result2.starts_with("(seen"));
+    }
+
+    // --- Phase 6: Budget-aware level tests ---
+
+    #[test]
+    fn test_auto_level_high_budget() {
+        let _g = setup();
+        // Fresh session = 0 tokens sent, 150k budget = 100% remaining = Off
+        assert_eq!(get_compression_level(), CompressionLevel::Off);
+    }
+
+    #[test]
+    fn test_auto_level_transitions() {
+        let _g = setup();
+        std::env::set_var("INFIGRAPH_TOKEN_BUDGET", "100000");
+        reset_session();
+
+        // 0% used → Off
+        assert_eq!(get_compression_level(), CompressionLevel::Off);
+
+        // Use 35k → 65% remaining → Summary
+        let level = track_tokens(35000);
+        assert_eq!(level, CompressionLevel::Summary);
+
+        // Use another 25k → 40% remaining → Aggressive
+        let level = track_tokens(25000);
+        assert_eq!(level, CompressionLevel::Aggressive);
+
+        // Use another 25k → 15% remaining → Minimal
+        let level = track_tokens(25000);
+        assert_eq!(level, CompressionLevel::Minimal);
+    }
+
+    #[test]
+    fn test_auto_level_custom_budget() {
+        let _g = setup();
+        std::env::set_var("INFIGRAPH_TOKEN_BUDGET", "1000");
+        reset_session();
+
+        // 900 tokens → 10% remaining → Minimal
+        let level = track_tokens(900);
+        assert_eq!(level, CompressionLevel::Minimal);
+    }
+
+    #[test]
+    fn test_track_tokens_cumulative() {
+        let _g = setup();
+        std::env::set_var("INFIGRAPH_TOKEN_BUDGET", "10000");
+        reset_session();
+
+        track_tokens(1000);
+        track_tokens(1000);
+        track_tokens(1000);
+        // 3000/10000 = 70% remaining → Summary (boundary)
+        let level = get_compression_level();
+        assert_eq!(level, CompressionLevel::Summary);
     }
 }

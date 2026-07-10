@@ -1,3 +1,4 @@
+use crate::session_context::CompressionLevel;
 use serde_json::Value;
 
 const MIN_TOKENS_TO_COMPRESS: usize = 100;
@@ -12,17 +13,30 @@ static BYPASS_TOOLS: &[&str] = &[
 ];
 
 pub fn compress_tool_output(raw: &str, tool_name: &str, args: &Value) -> String {
+    let level = crate::session_context::get_compression_level();
+    compress_tool_output_with_level(raw, tool_name, args, level)
+}
+
+pub fn compress_tool_output_with_level(
+    raw: &str,
+    tool_name: &str,
+    args: &Value,
+    level: CompressionLevel,
+) -> String {
+    if level == CompressionLevel::Off {
+        return raw.to_string();
+    }
     if should_bypass(tool_name, args, raw) {
         return raw.to_string();
     }
     match tool_name {
-        "search" => compress_search(raw, args),
-        "get_doc_context" => compress_doc_context(raw, args),
-        "find_all_references" => compress_references(raw, args),
-        "get_architecture" => compress_architecture(raw, args),
+        "search" => compress_search(raw, args, level),
+        "get_doc_context" => compress_doc_context(raw, args, level),
+        "find_all_references" => compress_references(raw, args, level),
+        "get_architecture" => compress_architecture(raw, args, level),
         "list_files" => compress_list_files(raw, args),
         "detect_dead_code" => compress_dead_code(raw, args),
-        "get_api_surface" => compress_api_surface(raw, args),
+        "get_api_surface" => compress_api_surface(raw, args, level),
         "git_summary" => compress_git_summary(raw, args),
         _ => raw.to_string(),
     }
@@ -57,15 +71,13 @@ fn should_bypass(tool_name: &str, args: &Value, raw: &str) -> bool {
     false
 }
 
-fn compress_search(raw: &str, _args: &Value) -> String {
-    // Parse header: "Search: 'query' (N symbol results, M text matches)"
+fn compress_search(raw: &str, _args: &Value, level: CompressionLevel) -> String {
     let mut lines = raw.lines().peekable();
     let header = match lines.next() {
         Some(h) if h.starts_with("Search:") => h,
         _ => return raw.to_string(),
     };
 
-    // Skip blank line after header
     if lines.peek().is_some_and(|l| l.is_empty()) {
         lines.next();
     }
@@ -79,9 +91,6 @@ fn compress_search(raw: &str, _args: &Value) -> String {
 
     for line in lines {
         if line == "---" {
-            if in_text || in_docs {
-                // second/third separator
-            }
             in_text = false;
             in_docs = false;
             continue;
@@ -107,46 +116,50 @@ fn compress_search(raw: &str, _args: &Value) -> String {
             doc_section.push_str(line);
             doc_section.push('\n');
         } else {
-            // Symbol result block: score line, optional docstring, optional grep
-            // Score lines start with a digit (e.g. "0.950  Function ...")
             let trimmed = line.trim_start();
-            if trimmed.is_empty() {
+            if trimmed.is_empty() || trimmed.starts_with("grep:") || trimmed.starts_with('"') {
                 continue;
             }
-            if trimmed.starts_with("grep:") || trimmed.starts_with('"') {
-                // Skip docstring previews and grep context in summary mode
-                continue;
-            }
-            // This is a score line — keep it as-is (already compact)
             symbol_lines.push(line.to_string());
         }
     }
+
+    let max_symbols = match level {
+        CompressionLevel::Off => usize::MAX,
+        CompressionLevel::Summary => usize::MAX,
+        CompressionLevel::Aggressive => 3,
+        CompressionLevel::Minimal => 1,
+    };
 
     let mut out = String::with_capacity(raw.len() / 2);
     out.push_str(header);
     out.push('\n');
 
-    for sl in &symbol_lines {
+    for (i, sl) in symbol_lines.iter().enumerate() {
+        if i >= max_symbols {
+            out.push_str(&format!(
+                "  ... ({} more results)\n",
+                symbol_lines.len() - max_symbols
+            ));
+            break;
+        }
         out.push_str(sl);
         out.push('\n');
     }
 
-    if !text_section.is_empty() {
+    if level <= CompressionLevel::Summary && !text_section.is_empty() {
         out.push_str("\n---\nText matches:\n");
         out.push_str(&text_section);
     }
 
-    if !doc_section.is_empty() {
+    if level <= CompressionLevel::Summary && !doc_section.is_empty() {
         out.push_str("\n---\nDocument matches:\n");
-        // Compress doc matches: keep only [file] heading (score) lines, drop snippets
         for line in doc_section.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with('[') {
-                // e.g. "  [docs/PLAN.md] Task 2.4 (score: 0.84)"
                 out.push_str(line);
                 out.push('\n');
             }
-            // Skip snippet lines (indented text content)
         }
     }
 
@@ -158,9 +171,7 @@ fn compress_search(raw: &str, _args: &Value) -> String {
     out
 }
 
-fn compress_doc_context(raw: &str, _args: &Value) -> String {
-    // Format: === Kind name ===\nFile: ...\nDoc: ...\nComplexity: ...\n\nSource:\n```\n...\n```\n\nCallers (N):\n...\n\nCallees (N):\n...
-    // Summary: drop Source block, keep signature line from source if available
+fn compress_doc_context(raw: &str, _args: &Value, level: CompressionLevel) -> String {
     if !raw.starts_with("=== ") {
         return raw.to_string();
     }
@@ -169,13 +180,50 @@ fn compress_doc_context(raw: &str, _args: &Value) -> String {
     let mut in_source = false;
     let mut source_first_line: Option<String> = None;
     let mut backtick_count = 0;
+    let mut caller_count = 0;
+    let mut callee_count = 0;
+    let mut in_callers = false;
+    let mut in_callees = false;
+
+    let max_callers = match level {
+        CompressionLevel::Off => usize::MAX,
+        CompressionLevel::Summary => usize::MAX,
+        CompressionLevel::Aggressive => 3,
+        CompressionLevel::Minimal => 0,
+    };
 
     for line in raw.lines() {
         if line == "Source:" {
             in_source = true;
+            in_callers = false;
+            in_callees = false;
             backtick_count = 0;
             continue;
         }
+        if line.starts_with("Callers (") {
+            in_source = false;
+            in_callers = true;
+            in_callees = false;
+            caller_count = 0;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if line.starts_with("Callees (") {
+            in_callers = false;
+            in_callees = true;
+            callee_count = 0;
+            if caller_count > max_callers {
+                out.push_str(&format!(
+                    "  ... ({} more callers)\n",
+                    caller_count - max_callers
+                ));
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
         if in_source {
             if line == "```" {
                 backtick_count += 1;
@@ -189,10 +237,8 @@ fn compress_doc_context(raw: &str, _args: &Value) -> String {
                 continue;
             }
             if backtick_count == 1 && source_first_line.is_none() {
-                // First line of source — extract signature (strip line number prefix)
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
-                    // Strip leading line number: "  23  pub fn login(...)"
                     let sig = if let Some(pos) = trimmed.find("  ") {
                         let after = trimmed[pos..].trim();
                         if after.is_empty() {
@@ -208,18 +254,63 @@ fn compress_doc_context(raw: &str, _args: &Value) -> String {
             }
             continue;
         }
+
+        if in_callers {
+            if !line.trim().is_empty() {
+                caller_count += 1;
+                if caller_count <= max_callers {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            continue;
+        }
+
+        if in_callees {
+            if !line.trim().is_empty() {
+                callee_count += 1;
+                if callee_count <= max_callers {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            continue;
+        }
+
         out.push_str(line);
         out.push('\n');
+    }
+
+    if in_callers && caller_count > max_callers {
+        out.push_str(&format!(
+            "  ... ({} more callers)\n",
+            caller_count - max_callers
+        ));
+    }
+    if in_callees && callee_count > max_callers {
+        out.push_str(&format!(
+            "  ... ({} more callees)\n",
+            callee_count - max_callers
+        ));
     }
 
     out
 }
 
-fn compress_references(raw: &str, _args: &Value) -> String {
-    // Format: "References to 'X' (N total):\n\n  file:line — in func\n..."
-    // Summary: group by file, show count per file instead of listing every line
+fn compress_references(raw: &str, _args: &Value, level: CompressionLevel) -> String {
     if !raw.starts_with("References to ") {
         return raw.to_string();
+    }
+
+    if level >= CompressionLevel::Minimal {
+        let header = raw.lines().next().unwrap_or("");
+        let file_count = raw
+            .lines()
+            .filter(|l| l.contains(" \u{2014} in "))
+            .filter_map(|l| l.trim().split(':').next())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        return format!("{header}\n  ({file_count} files — use detail=true for locations)");
     }
 
     let mut lines = raw.lines();
@@ -275,12 +366,17 @@ fn compress_references(raw: &str, _args: &Value) -> String {
     out
 }
 
-fn compress_architecture(raw: &str, _args: &Value) -> String {
-    // Summary: keep language breakdown (top 5), symbols by kind, hotspots (top 5),
-    // hubs (top 5), truncate entry points to count only
+fn compress_architecture(raw: &str, _args: &Value, level: CompressionLevel) -> String {
     if !raw.contains("=== Language Breakdown ===") {
         return raw.to_string();
     }
+
+    let (lang_limit, hotspot_limit, hub_limit) = match level {
+        CompressionLevel::Off => (99, 99, 99),
+        CompressionLevel::Summary => (5, 5, 5),
+        CompressionLevel::Aggressive => (3, 3, 3),
+        CompressionLevel::Minimal => (2, 0, 0),
+    };
 
     let mut out = String::with_capacity(raw.len() / 2);
     let mut section = "";
@@ -329,10 +425,10 @@ fn compress_architecture(raw: &str, _args: &Value) -> String {
 
         section_count += 1;
         let limit = match section {
-            "lang" => 5,
-            "kind" => 99, // keep all kinds — small
-            "hotspot" => 5,
-            "hub" => 5,
+            "lang" => lang_limit,
+            "kind" => 99,
+            "hotspot" => hotspot_limit,
+            "hub" => hub_limit,
             _ => 99,
         };
 
@@ -451,11 +547,15 @@ fn compress_dead_code(raw: &str, _args: &Value) -> String {
     out
 }
 
-fn compress_api_surface(raw: &str, _args: &Value) -> String {
-    // Format: "API Surface (N symbols):\n\n## file\n  [Kind] name (Lnn)\n..."
-    // Compress: collapse per-file to one-liner with count, keep routes
+fn compress_api_surface(raw: &str, _args: &Value, level: CompressionLevel) -> String {
     if !raw.starts_with("API Surface") {
         return raw.to_string();
+    }
+
+    if level >= CompressionLevel::Minimal {
+        let header = raw.lines().next().unwrap_or("");
+        let file_count = raw.lines().filter(|l| l.starts_with("## ")).count();
+        return format!("{header}\n  ({file_count} files — use detail=true for symbols)");
     }
 
     let mut lines = raw.lines();
@@ -1008,7 +1108,7 @@ Document matches:
 
 ⚠ No file watcher running — results may be stale. Run `infigraph watch` or re-index to refresh."#;
 
-        let compressed = compress_search(raw, &json!({}));
+        let compressed = compress_search(raw, &json!({}), CompressionLevel::Summary);
 
         // Should keep score lines
         assert!(compressed.contains("0.950  Function login"));
@@ -1055,7 +1155,7 @@ Callees (3):
   crates/auth/src/lib.rs::create_token
 "#;
 
-        let compressed = compress_doc_context(raw, &json!({}));
+        let compressed = compress_doc_context(raw, &json!({}), CompressionLevel::Summary);
 
         // Should keep header, doc, complexity
         assert!(compressed.contains("=== Function login ==="));
@@ -1081,13 +1181,19 @@ Callees (3):
     #[test]
     fn test_compress_doc_context_passthrough_on_bad_format() {
         let raw = "not a doc context output";
-        assert_eq!(compress_doc_context(raw, &json!({})), raw);
+        assert_eq!(
+            compress_doc_context(raw, &json!({}), CompressionLevel::Summary),
+            raw
+        );
     }
 
     #[test]
     fn test_compress_search_passthrough_on_bad_format() {
         let raw = "something unexpected";
-        assert_eq!(compress_search(raw, &json!({})), raw);
+        assert_eq!(
+            compress_search(raw, &json!({}), CompressionLevel::Summary),
+            raw
+        );
     }
 
     #[test]
@@ -1101,7 +1207,7 @@ Callees (3):
     fn test_compress_references_groups_by_file() {
         let raw = "References to 'src/auth.rs::login' (5 total):\n\n  src/routes/auth.rs:12 — in login_handler\n  src/routes/auth.rs:34 — in logout_handler\n  src/tests/auth_test.rs:10 — in test_login\n  src/tests/auth_test.rs:25 — in test_login_fail\n  src/tests/auth_test.rs:40 — in test_login_expired\n";
 
-        let compressed = compress_references(raw, &json!({}));
+        let compressed = compress_references(raw, &json!({}), CompressionLevel::Summary);
 
         // Header preserved
         assert!(compressed.contains("References to 'src/auth.rs::login' (5 total):"));
@@ -1116,7 +1222,7 @@ Callees (3):
     fn test_compress_references_single_ref_per_file() {
         let raw = "References to 'lib.rs::foo' (2 total):\n\n  src/a.rs:10 — in bar\n  src/b.rs:20 — in baz\n";
 
-        let compressed = compress_references(raw, &json!({}));
+        let compressed = compress_references(raw, &json!({}), CompressionLevel::Summary);
 
         // Single refs kept as-is (no grouping needed)
         assert!(compressed.contains("src/a.rs:10 — in bar"));
@@ -1126,7 +1232,10 @@ Callees (3):
     #[test]
     fn test_compress_references_passthrough_on_bad_format() {
         let raw = "not a references output";
-        assert_eq!(compress_references(raw, &json!({})), raw);
+        assert_eq!(
+            compress_references(raw, &json!({}), CompressionLevel::Summary),
+            raw
+        );
     }
 
     #[test]
@@ -1169,7 +1278,7 @@ Callees (3):
   Function setup   src/test.rs
 ";
 
-        let compressed = compress_architecture(raw, &json!({}));
+        let compressed = compress_architecture(raw, &json!({}), CompressionLevel::Summary);
 
         // Languages: top 5 kept, rest truncated
         assert!(compressed.contains("rust: 201 files"));
@@ -1193,7 +1302,10 @@ Callees (3):
     #[test]
     fn test_compress_architecture_passthrough_on_bad_format() {
         let raw = "not architecture output";
-        assert_eq!(compress_architecture(raw, &json!({})), raw);
+        assert_eq!(
+            compress_architecture(raw, &json!({}), CompressionLevel::Summary),
+            raw
+        );
     }
 
     #[test]
@@ -1248,7 +1360,7 @@ Callees (3):
     fn test_compress_api_surface_collapses_symbols_keeps_routes() {
         let raw = "API Surface (8 symbols):\n\n## src/lib.rs\n  [Class] Foo (L1)\n  [Method] bar (L5)\n  [Method] baz (L10)\n## src/routes.rs\n  [Route] GET /users (L3) — route GET /users\n  [Route] POST /users (L8) — route POST /users\n";
 
-        let compressed = compress_api_surface(raw, &json!({}));
+        let compressed = compress_api_surface(raw, &json!({}), CompressionLevel::Summary);
 
         assert!(compressed.contains("API Surface (8 symbols):"));
         assert!(compressed.contains("src/lib.rs (3 symbols)"));
@@ -1405,5 +1517,110 @@ Callees (3):
         assert!(compressed.contains("more rows"));
         assert!(compressed.contains("| user19 | 19 |"));
         assert!(!compressed.contains("| user10 |"));
+    }
+
+    // --- Phase 6: Level-aware compression tests ---
+
+    #[test]
+    fn test_search_aggressive_limits_results() {
+        let raw = "Search: 'foo' (5 symbol results, 0 text matches)\n\n0.95  Function a (f.rs:L1-5)\n0.90  Function b (f.rs:L6-10)\n0.85  Function c (f.rs:L11-15)\n0.80  Function d (f.rs:L16-20)\n0.75  Function e (f.rs:L21-25)\n";
+
+        let compressed = compress_search(raw, &json!({}), CompressionLevel::Aggressive);
+        assert!(compressed.contains("Function a"));
+        assert!(compressed.contains("Function c"));
+        assert!(!compressed.contains("Function d"));
+        assert!(compressed.contains("2 more results"));
+    }
+
+    #[test]
+    fn test_search_minimal_one_result() {
+        let raw = "Search: 'foo' (3 symbol results, 2 text matches)\n\n0.95  Function a (f.rs:L1-5)\n0.90  Function b (f.rs:L6-10)\n0.85  Function c (f.rs:L11-15)\n\n---\nText matches:\nf.rs:1: let foo = 1;\nf.rs:2: let bar = foo;\n";
+
+        let compressed = compress_search(raw, &json!({}), CompressionLevel::Minimal);
+        assert!(compressed.contains("Function a"));
+        assert!(!compressed.contains("Function b"));
+        assert!(compressed.contains("2 more results"));
+        assert!(!compressed.contains("Text matches:"));
+    }
+
+    #[test]
+    fn test_doc_context_aggressive_truncates_callers() {
+        let raw = "=== Function login ===\nFile: src/lib.rs:1-10\n\nSource:\n```\n  1  pub fn login() {}\n```\n\nCallers (5):\n  a::x\n  b::y\n  c::z\n  d::w\n  e::v\n\nCallees (4):\n  f::a\n  f::b\n  f::c\n  f::d\n";
+
+        let compressed = compress_doc_context(raw, &json!({}), CompressionLevel::Aggressive);
+        assert!(compressed.contains("a::x"));
+        assert!(compressed.contains("c::z"));
+        assert!(!compressed.contains("d::w"));
+        assert!(compressed.contains("2 more callers"));
+        assert!(compressed.contains("f::c"));
+        assert!(!compressed.contains("f::d"));
+        assert!(compressed.contains("1 more callees"));
+    }
+
+    #[test]
+    fn test_doc_context_minimal_no_callers() {
+        let raw = "=== Function login ===\nFile: src/lib.rs:1-10\n\nSource:\n```\n  1  pub fn login() {}\n```\n\nCallers (3):\n  a::x\n  b::y\n  c::z\n\nCallees (2):\n  f::a\n  f::b\n";
+
+        let compressed = compress_doc_context(raw, &json!({}), CompressionLevel::Minimal);
+        assert!(!compressed.contains("a::x"));
+        assert!(compressed.contains("3 more callers"));
+        assert!(compressed.contains("2 more callees"));
+    }
+
+    #[test]
+    fn test_references_minimal_count_only() {
+        let raw = "References to 'foo' (4 total):\n\n  src/a.rs:1 \u{2014} in bar\n  src/a.rs:5 \u{2014} in baz\n  src/b.rs:10 \u{2014} in qux\n  src/c.rs:20 \u{2014} in quux\n";
+
+        let compressed = compress_references(raw, &json!({}), CompressionLevel::Minimal);
+        assert!(compressed.contains("References to 'foo' (4 total):"));
+        assert!(compressed.contains("3 files"));
+        assert!(!compressed.contains("bar"));
+    }
+
+    #[test]
+    fn test_architecture_aggressive_fewer_items() {
+        let raw = "\
+=== Language Breakdown ===
+                  rust: 201 files
+              markdown: 24 files
+                  toml: 16 files
+                  json: 10 files
+                python: 8 files
+                  bash: 6 files
+
+=== Symbols by Kind ===
+              Function: 1146
+
+=== Hotspot Files (most symbols) ===
+   1. src/a.rs       220 symbols
+   2. src/b.rs       85 symbols
+   3. src/c.rs       83 symbols
+   4. src/d.rs       77 symbols
+   5. src/e.rs       72 symbols
+";
+
+        let compressed = compress_architecture(raw, &json!({}), CompressionLevel::Aggressive);
+        assert!(compressed.contains("toml: 16 files"));
+        assert!(!compressed.contains("json: 10 files"));
+        assert!(compressed.contains("src/c.rs"));
+        assert!(!compressed.contains("src/d.rs"));
+    }
+
+    #[test]
+    fn test_off_level_passthrough() {
+        let raw = "x ".repeat(200);
+        let result =
+            compress_tool_output_with_level(&raw, "search", &json!({}), CompressionLevel::Off);
+        assert_eq!(result, raw);
+    }
+
+    #[test]
+    fn test_api_surface_minimal_count_only() {
+        let raw = "API Surface (5 symbols):\n\n## src/lib.rs\n  [Class] Foo (L1)\n  [Method] bar (L5)\n## src/routes.rs\n  [Route] GET /users (L3)\n";
+
+        let compressed = compress_api_surface(raw, &json!({}), CompressionLevel::Minimal);
+        assert!(compressed.contains("API Surface (5 symbols):"));
+        assert!(compressed.contains("2 files"));
+        assert!(!compressed.contains("[Class]"));
     }
 }
