@@ -67,7 +67,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
-            cargo_features: "--no-default-features"
+            cargo_features: ""
     steps:
       - uses: actions/checkout@v4
       - name: Free disk space (Ubuntu)
