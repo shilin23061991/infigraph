@@ -61,6 +61,17 @@ fn find_config_file() -> Option<PathBuf> {
     }
 }
 
+fn find_config_file_with_home_fallback() -> Option<PathBuf> {
+    if let Some(p) = find_config_file() {
+        return Some(p);
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
+    let candidate = PathBuf::from(home).join(".infigraph").join("config.toml");
+    candidate.exists().then_some(candidate)
+}
+
 const DEDUP_STATE_FILE: &str = "dedup_state.json";
 const PERSIST_INTERVAL: usize = 5;
 
@@ -100,7 +111,7 @@ fn persist_dedup_state(seen: &HashMap<String, SeenEntry>) {
 }
 
 fn load_config() -> CompressionConfig {
-    find_config_file()
+    find_config_file_with_home_fallback()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| toml::from_str::<ConfigFile>(&s).ok())
         .map(|c| c.compression)

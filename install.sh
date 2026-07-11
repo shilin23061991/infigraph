@@ -253,6 +253,17 @@ if [[ "$OS_TAG" != "pc-windows-msvc" ]]; then
   fi
 fi
 
+# Write default compression config
+INFIGRAPH_CONFIG="$HOME/.infigraph/config.toml"
+if [ ! -f "$INFIGRAPH_CONFIG" ]; then
+  mkdir -p "$HOME/.infigraph"
+  cat > "$INFIGRAPH_CONFIG" <<'TOML'
+[compression]
+level = "summary"
+TOML
+  echo "Created compression config: ${INFIGRAPH_CONFIG}"
+fi
+
 # Download Kompress ML compression model (~275MB)
 KOMPRESS_DIR="$HOME/.infigraph/models/kompress-small"
 HF_REPO="chopratejas/kompress-small"
