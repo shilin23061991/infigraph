@@ -4,11 +4,22 @@ mod handlers_git;
 mod handlers_symbol;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use anyhow::Result;
 use serde_json::{json, Value};
 use tiny_http::{Header, Response, Server};
+
+static READY: AtomicBool = AtomicBool::new(true);
+
+pub fn set_ready(val: bool) {
+    READY.store(val, Ordering::SeqCst);
+}
+
+pub fn is_ready() -> bool {
+    READY.load(Ordering::SeqCst)
+}
 
 use infigraph_core::Infigraph;
 use infigraph_languages::bundled_registry;
@@ -85,6 +96,27 @@ pub fn start_mcp_http_server(port: u16, is_primary: bool) -> bool {
             let method = request.method().to_string();
             let route = url.split('?').next().unwrap_or(&url);
 
+            if method == "GET" && route == "/health" {
+                let (status, body) = if is_ready() {
+                    (200, json!({"status": "ok"}))
+                } else {
+                    (503, json!({"status": "indexing"}))
+                };
+                let _ = request.respond(serve_json_status(status, body));
+                continue;
+            }
+
+            if method == "POST" && route == "/ready" {
+                if !check_auth(&request) {
+                    let _ =
+                        request.respond(serve_json_status(401, json!({"error": "Unauthorized"})));
+                    continue;
+                }
+                set_ready(true);
+                let _ = request.respond(serve_json_status(200, json!({"status": "ok"})));
+                continue;
+            }
+
             if !check_auth(&request) {
                 let _ = request.respond(serve_json_status(
                     401,
@@ -95,7 +127,6 @@ pub fn start_mcp_http_server(port: u16, is_primary: bool) -> bool {
 
             let response = match (method.as_str(), route) {
                 ("POST", "/tools/mcp") => handle_mcp_post(&mut request, is_primary),
-                ("GET", "/health") => serve_json(json!({"status": "ok"})),
                 ("OPTIONS", _) => handle_cors_preflight(),
                 _ => serve_json_status(
                     404,

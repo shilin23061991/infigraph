@@ -249,6 +249,10 @@ fn run() -> Result<()> {
 
     let mcp_mode = args.iter().any(|a| a == "--mcp");
     let serve_mode = args.iter().any(|a| a == "--serve");
+    let not_ready = args.iter().any(|a| a == "--not-ready");
+    if not_ready {
+        web::set_ready(false);
+    }
     let mcp_port: u16 = args
         .iter()
         .find(|a| a.starts_with("--mcp-port="))
