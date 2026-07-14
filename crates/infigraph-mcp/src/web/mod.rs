@@ -4,14 +4,18 @@ mod handlers_git;
 mod handlers_symbol;
 
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use anyhow::Result;
+use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
+use sha2::Sha256;
 use tiny_http::{Header, Response, Server};
 
 static READY: AtomicBool = AtomicBool::new(true);
+static REINDEXING: AtomicBool = AtomicBool::new(false);
 
 pub fn set_ready(val: bool) {
     READY.store(val, Ordering::SeqCst);
@@ -114,6 +118,12 @@ pub fn start_mcp_http_server(port: u16, is_primary: bool) -> bool {
                 }
                 set_ready(true);
                 let _ = request.respond(serve_json_status(200, json!({"status": "ok"})));
+                continue;
+            }
+
+            if method == "POST" && route == "/webhook/reindex" {
+                let resp = handle_webhook_reindex(&mut request);
+                let _ = request.respond(resp);
                 continue;
             }
 
@@ -237,6 +247,128 @@ fn handle_api_post(
     let params: Value = serde_json::from_str(&body).unwrap_or(json!({}));
     let result = handler(&params);
     serve_json(result)
+}
+
+fn handle_webhook_reindex(request: &mut tiny_http::Request) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut body = String::new();
+    let _ = request.as_reader().read_to_string(&mut body);
+
+    let signature = request
+        .headers()
+        .iter()
+        .find(|h| {
+            h.field
+                .as_str()
+                .as_str()
+                .eq_ignore_ascii_case("x-hub-signature-256")
+        })
+        .map(|h| h.value.as_str().to_string());
+
+    if !validate_webhook_signature(&body, signature.as_deref()) {
+        return serve_json_status(401, json!({"error": "Invalid signature"}));
+    }
+
+    let event: Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => return serve_json_status(400, json!({"error": "Invalid JSON"})),
+    };
+
+    let repo_name = event
+        .pointer("/repository/name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let ref_str = event.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+    let default_branch = event
+        .pointer("/repository/default_branch")
+        .and_then(|v| v.as_str())
+        .unwrap_or("main");
+
+    let expected_ref = format!("refs/heads/{}", default_branch);
+    if ref_str != expected_ref {
+        return serve_json_status(
+            200,
+            json!({"status": "ignored", "reason": "non-default branch"}),
+        );
+    }
+
+    if REINDEXING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return serve_json_status(
+            200,
+            json!({"status": "queued", "reason": "reindex already in progress"}),
+        );
+    }
+
+    let clone_dir = std::env::var("CLONE_DIR").unwrap_or_else(|_| "/app/data/repos".to_string());
+    let group = std::env::var("GROUP_NAME").unwrap_or_else(|_| "org".to_string());
+    let infigraph_bin =
+        std::env::var("INFIGRAPH_BIN").unwrap_or_else(|_| "/app/infigraph".to_string());
+
+    let repo_name_log = repo_name.clone();
+    crate::mcp_log(
+        "INFO",
+        &format!("webhook: reindex triggered for {repo_name_log}"),
+    );
+
+    let repo_name_response = repo_name.clone();
+    thread::spawn(move || {
+        let repo_path = format!("{}/{}", clone_dir, repo_name);
+
+        if std::path::Path::new(&repo_path).join(".git").exists() {
+            crate::mcp_log("INFO", &format!("webhook: pulling {repo_name}"));
+            let _ = Command::new("git")
+                .args(["-C", &repo_path, "pull", "--ff-only"])
+                .status();
+        }
+
+        crate::mcp_log("INFO", &format!("webhook: indexing {repo_name}"));
+        let _ = Command::new(&infigraph_bin)
+            .arg("index")
+            .current_dir(&repo_path)
+            .status();
+
+        crate::mcp_log("INFO", &format!("webhook: rebuilding group {group}"));
+        let _ = Command::new(&infigraph_bin)
+            .args(["group", "build", &group])
+            .status();
+
+        crate::mcp_log("INFO", "webhook: reindex complete");
+        REINDEXING.store(false, Ordering::SeqCst);
+    });
+
+    serve_json_status(
+        200,
+        json!({"status": "accepted", "repo": repo_name_response}),
+    )
+}
+
+fn validate_webhook_signature(body: &str, signature: Option<&str>) -> bool {
+    let secret = match std::env::var("WEBHOOK_SECRET") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return true,
+    };
+    let sig = match signature {
+        Some(s) => s,
+        None => return false,
+    };
+    let hex_sig = match sig.strip_prefix("sha256=") {
+        Some(h) => h,
+        None => return false,
+    };
+    let expected = match hex::decode(hex_sig) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.update(body.as_bytes());
+    mac.verify_slice(&expected).is_ok()
 }
 
 pub(super) fn open_prism(params: &Value) -> Result<Infigraph> {
