@@ -46,7 +46,7 @@ else
   BIN_SUFFIX=""
 fi
 
-# For GHE: require gh CLI + auth. For public GitHub: prefer gh, fall back to curl.
+# For GHE: require gh CLI + auth. For public GitHub: use curl directly (no gh needed).
 if [[ "$GHE_HOST" != "github.com" ]]; then
   if ! command -v gh &>/dev/null; then
     echo "Error: gh CLI not found. Install it first:"
@@ -98,9 +98,22 @@ try_prebuilt() {
   # Get latest release tag
   local release_tag
   if [[ "$GHE_HOST" == "github.com" ]]; then
-    # Public GitHub: use curl, no gh CLI needed
-    release_tag=$(curl -fsSL "https://api.github.com/repos/${GHE_OWNER}/${GHE_REPO}/releases/latest" 2>/dev/null \
-      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    # Public GitHub: direct download, no gh CLI needed
+    local api_response curl_auth=()
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      curl_auth=(-H "Authorization: token ${GITHUB_TOKEN}")
+    fi
+    api_response=$(curl -sL "${curl_auth[@]}" "https://api.github.com/repos/${GHE_OWNER}/${GHE_REPO}/releases/latest" 2>/dev/null)
+    release_tag=$(echo "$api_response" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    if [ -z "$release_tag" ]; then
+      # Check if rate-limited
+      if echo "$api_response" | grep -q "rate limit"; then
+        echo "GitHub API rate limit exceeded (unauthenticated: 60 requests/hour)."
+        echo "Options:"
+        echo "  1. Wait and retry"
+        echo "  2. Set GITHUB_TOKEN: export GITHUB_TOKEN=ghp_xxx && bash install.sh"
+      fi
+    fi
   else
     release_tag=$(gh api --hostname "${GHE_HOST}" "repos/${GHE_OWNER}/${GHE_REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
   fi

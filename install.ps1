@@ -24,40 +24,18 @@ function Reload-Path {
                 [System.Environment]::GetEnvironmentVariable("PATH","User")
 }
 
-# Install winget if missing (Windows 10 without App Installer)
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Host "→ winget not found. Installing App Installer..."
-    $appInstallerUrl = "https://aka.ms/getwinget"
-    $appInstallerPath = "$env:TEMP\AppInstaller.msixbundle"
-    try {
-        Invoke-WebRequest -Uri $appInstallerUrl -OutFile $appInstallerPath -UseBasicParsing
-        Add-AppxPackage -Path $appInstallerPath
-        Remove-Item $appInstallerPath -Force -ErrorAction SilentlyContinue
-        Reload-Path
-    } catch {
-        Write-Host "Error: Could not install winget automatically."
-        Write-Host "Please install App Installer manually from the Microsoft Store:"
-        Write-Host "  ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"
-        Write-Host "Then re-run this installer."
+# For GHE: require gh CLI + auth. For public GitHub: use Invoke-WebRequest directly.
+if ($GHE_HOST -ne "github.com") {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Host "Error: gh CLI not found. Required for GitHub Enterprise."
+        Write-Host "Install it: winget install --id GitHub.cli -e"
+        Write-Host "Then authenticate: gh auth login --hostname $GHE_HOST"
         exit 1
     }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host "Error: winget still not available after install. Restart your shell and re-run."
-        exit 1
+    if ((gh auth status --hostname $GHE_HOST 2>&1) -match "not logged") {
+        Write-Host "→ Authenticating with $GHE_HOST..."
+        gh auth login --hostname $GHE_HOST
     }
-}
-
-# Install gh CLI if missing
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    Write-Host "→ gh CLI not found. Installing via winget..."
-    winget install --id GitHub.cli -e --silent
-    Reload-Path
-}
-
-# Authenticate with GHE if needed
-if ((gh auth status --hostname $GHE_HOST 2>&1) -match "not logged") {
-    Write-Host "→ Authenticating with $GHE_HOST..."
-    gh auth login --hostname $GHE_HOST
 }
 
 function Move-RunningBinary {
@@ -84,22 +62,53 @@ function Cleanup-OldBinaries {
 function Install-Prebuilt {
     Write-Host "Checking for pre-built binary..."
 
-    $releaseTag = gh api --hostname $GHE_HOST "repos/$GHE_OWNER/$GHE_REPO/releases/latest" --jq '.tag_name' 2>$null
-    if (-not $releaseTag) {
-        Write-Host "No releases found."
-        return $false
-    }
-    Write-Host "Latest release: $releaseTag"
-
     $downloadPath = "$env:TEMP\$ASSET"
-    gh release download $releaseTag `
-        --repo "$GHE_HOST/$GHE_OWNER/$GHE_REPO" `
-        --pattern $ASSET `
-        --dir $env:TEMP `
-        --clobber 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "No binary for $TARGET in release $releaseTag."
-        return $false
+
+    if ($GHE_HOST -eq "github.com") {
+        # Public GitHub: direct download, no gh CLI needed
+        $headers = @{}
+        if ($env:GITHUB_TOKEN) {
+            $headers["Authorization"] = "token $env:GITHUB_TOKEN"
+        }
+        try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$GHE_OWNER/$GHE_REPO/releases/latest" -Headers $headers -UseBasicParsing
+            $releaseTag = $release.tag_name
+        } catch {
+            if ($_.Exception.Response.StatusCode -eq 403) {
+                Write-Host "GitHub API rate limit exceeded (unauthenticated: 60 requests/hour)."
+                Write-Host "Set GITHUB_TOKEN: `$env:GITHUB_TOKEN = 'ghp_xxx'; .\install.ps1"
+            } else {
+                Write-Host "No releases found."
+            }
+            return $false
+        }
+        Write-Host "Latest release: $releaseTag"
+
+        $url = "https://github.com/$GHE_OWNER/$GHE_REPO/releases/download/$releaseTag/$ASSET"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing
+        } catch {
+            Write-Host "No binary for $TARGET in release $releaseTag."
+            return $false
+        }
+    } else {
+        # GHE: use gh CLI (requires auth)
+        $releaseTag = gh api --hostname $GHE_HOST "repos/$GHE_OWNER/$GHE_REPO/releases/latest" --jq '.tag_name' 2>$null
+        if (-not $releaseTag) {
+            Write-Host "No releases found."
+            return $false
+        }
+        Write-Host "Latest release: $releaseTag"
+
+        gh release download $releaseTag `
+            --repo "$GHE_HOST/$GHE_OWNER/$GHE_REPO" `
+            --pattern $ASSET `
+            --dir $env:TEMP `
+            --clobber 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "No binary for $TARGET in release $releaseTag."
+            return $false
+        }
     }
 
     New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
@@ -141,7 +150,11 @@ function Install-FromSource {
     } else {
         Write-Host "Cloning from $GHE_HOST/$GHE_OWNER/$GHE_REPO..."
         Remove-Item $srcDir -Recurse -Force -ErrorAction SilentlyContinue
-        gh repo clone "$GHE_OWNER/$GHE_REPO" $srcDir -- --hostname $GHE_HOST
+        if ($GHE_HOST -eq "github.com") {
+            git clone "https://github.com/$GHE_OWNER/$GHE_REPO.git" $srcDir
+        } else {
+            gh repo clone "$GHE_OWNER/$GHE_REPO" $srcDir -- --hostname $GHE_HOST
+        }
     }
 
     Write-Host "Building release (this may take several minutes)..."
