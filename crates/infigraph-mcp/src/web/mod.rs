@@ -38,7 +38,7 @@ pub fn start_ui_server(port: u16) -> bool {
 
             let response = match (method.as_str(), route) {
                 ("GET", "/") => serve_html(INDEX_HTML, "text/html"),
-                ("GET", "/health") | ("GET", "/api/health") => serve_json(json!({"status": "ok"})),
+                ("GET", "/api/health") => serve_json(json!({"status": "ok"})),
 
                 // API endpoints
                 ("POST", "/api/index") => handle_api_post(&mut request, api_index),
