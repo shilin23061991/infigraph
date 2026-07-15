@@ -589,12 +589,30 @@ impl PostgresMetaStore {
     }
 
     pub fn upsert_embeddings_bulk(&self, embeddings: &[(String, Vec<f32>)], kind: &str) -> Result<usize> {
-        let mut count = 0usize;
-        for (id, vec) in embeddings {
-            self.upsert_embedding(id, kind, vec)?;
-            count += 1;
+        if embeddings.is_empty() {
+            return Ok(0);
         }
-        Ok(count)
+        let stmt = self.block_on(async {
+            self.client
+                .prepare(
+                    "INSERT INTO embeddings (id, kind, vector) VALUES ($1, $2, $3) \
+                     ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, vector = EXCLUDED.vector",
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("prepare upsert failed: {e}"))
+        })?;
+        let mut total = 0usize;
+        for (id, vec) in embeddings {
+            let v = Vector::from(vec.clone());
+            self.block_on(async {
+                self.client
+                    .execute(&stmt, &[&id, &kind, &v])
+                    .await
+                    .map_err(|e| anyhow::anyhow!("upsert embedding failed: {e}"))
+            })?;
+            total += 1;
+        }
+        Ok(total)
     }
 
     pub fn get_embedding(&self, id: &str) -> Result<Option<Vec<f32>>> {
@@ -615,15 +633,20 @@ impl PostgresMetaStore {
     }
 
     pub fn delete_embeddings(&self, ids: &[String]) -> Result<()> {
-        for id in ids {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        const BATCH: usize = 500;
+        for chunk in ids.chunks(BATCH) {
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("${}", i)).collect();
+            let sql = format!("DELETE FROM embeddings WHERE id IN ({})", placeholders.join(", "));
+            let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                chunk.iter().map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
             self.block_on(async {
                 self.client
-                    .execute(
-                        "DELETE FROM embeddings WHERE id = $1",
-                        &[&id.as_str()],
-                    )
+                    .execute(&sql, &params)
                     .await
-                    .map_err(|e| anyhow::anyhow!("delete embedding failed: {e}"))
+                    .map_err(|e| anyhow::anyhow!("delete embeddings failed: {e}"))
             })?;
         }
         Ok(())

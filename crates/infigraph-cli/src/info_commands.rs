@@ -453,6 +453,18 @@ pub(crate) fn cmd_scip_import(root: &Path, index_path: &Path) -> Result<()> {
 pub(crate) fn cmd_index_docs(root: &Path) -> Result<()> {
     let start = std::time::Instant::now();
     let mut idx = infigraph_docs::DocIndex::open(root)?;
+
+    #[cfg(feature = "remote")]
+    let is_remote = std::env::var("INFIGRAPH_BACKEND")
+        .map(|v| v == "neo4j")
+        .unwrap_or(false);
+    #[cfg(not(feature = "remote"))]
+    let is_remote = false;
+
+    if is_remote {
+        idx.set_skip_file_embeddings(true);
+    }
+
     idx.init()?;
     let result = idx.index()?;
     let elapsed = start.elapsed();
@@ -467,6 +479,22 @@ pub(crate) fn cmd_index_docs(root: &Path) -> Result<()> {
             stats.document_count, stats.chunk_count
         );
     }
+
+    #[cfg(feature = "remote")]
+    if is_remote {
+        let pg = infigraph_core::meta::PostgresMetaStore::connect_from_env()?;
+        pg.init_schema()?;
+        let store = idx.store().context("doc store not initialized")?;
+        let chunk_refs: Vec<&infigraph_docs::chunk::Chunk> = result.new_chunks.iter().collect();
+        let changed_refs: Vec<&str> = result.changed_files.iter().map(|s| s.as_str()).collect();
+        let count = infigraph_docs::embed::update_doc_embeddings_remote(
+            store, &pg, &chunk_refs, &changed_refs,
+        )?;
+        if count > 0 {
+            println!("Saved {} doc embeddings to Postgres pgvector", count);
+        }
+    }
+
     Ok(())
 }
 

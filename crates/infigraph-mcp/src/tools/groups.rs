@@ -399,14 +399,33 @@ pub fn tool_group_build(args: &Value) -> Result<String> {
         edge_count
     ));
 
-    // Step 4: Build combined graph
-    let (symbols, edges) = combined::build_combined_graph(&registry, group_name)?;
-    out.push_str(&format!(
-        "Step 4/5 — Combined graph: {} symbols, {} edges\n",
-        symbols, edges
-    ));
+    // Step 4: Build combined graph (skip in remote mode — shared Neo4j already namespaced)
+    let is_remote = {
+        #[cfg(feature = "remote")]
+        {
+            std::env::var("INFIGRAPH_BACKEND")
+                .map(|v| v == "neo4j")
+                .unwrap_or(false)
+        }
+        #[cfg(not(feature = "remote"))]
+        {
+            false
+        }
+    };
 
-    // Step 5: Index per-repo docs, then build one physical combined document store.
+    if is_remote {
+        out.push_str("Step 4/5 — Skipped combined graph (shared Neo4j already namespaced)\n");
+    } else {
+        let (symbols, edges) = combined::build_combined_graph(&registry, group_name)?;
+        out.push_str(&format!(
+            "Step 4/5 — Combined graph: {} symbols, {} edges\n",
+            symbols, edges
+        ));
+    }
+
+    // Step 5: Index per-repo docs + embeddings.
+    // In remote mode: skip combined doc store (shared Neo4j), store embeddings in pgvector.
+    // In local mode: build combined Kuzu doc store, store embeddings in file.
     let group = registry
         .groups
         .get(group_name)
@@ -419,21 +438,46 @@ pub fn tool_group_build(args: &Value) -> Result<String> {
             .get(repo_name)
             .context(format!("repo '{}' not in registry", repo_name))?;
         let mut idx = infigraph_docs::DocIndex::open(&entry.path)?;
+        if is_remote {
+            idx.set_skip_file_embeddings(true);
+        }
         idx.init()?;
-        bfs_discovered += idx.index()?.bfs_discovered;
+        let result = idx.index()?;
+        bfs_discovered += result.bfs_discovered;
+
+        #[cfg(feature = "remote")]
+        if is_remote {
+            if let Some(store) = idx.store() {
+                let pg = infigraph_core::meta::PostgresMetaStore::connect_from_env()?;
+                pg.init_schema()?;
+                let chunk_refs: Vec<&infigraph_docs::chunk::Chunk> = result.new_chunks.iter().collect();
+                let changed_refs: Vec<&str> = result.changed_files.iter().map(|s| s.as_str()).collect();
+                let _ = infigraph_docs::embed::update_doc_embeddings_remote(
+                    store, &pg, &chunk_refs, &changed_refs,
+                )?;
+            }
+        }
     }
-    let doc_stats = infigraph_docs::combined::build_combined_docs(&registry, group_name)?;
-    out.push_str(&format!(
-        "Step 5/5 — Combined documents: {} docs, {} chunks, {} links ({} intra-repo, {} cross-repo), {} sources, {} BFS discoveries, {} embeddings\n",
-        doc_stats.documents,
-        doc_stats.chunks,
-        doc_stats.links,
-        doc_stats.intra_repo_links,
-        doc_stats.cross_repo_links,
-        doc_stats.sources,
-        bfs_discovered,
-        doc_stats.embeddings
-    ));
+
+    if is_remote {
+        out.push_str(&format!(
+            "Step 5/5 — Indexed docs for {} repos, {} BFS discoveries, embeddings in pgvector\n",
+            group.repos.len(), bfs_discovered
+        ));
+    } else {
+        let doc_stats = infigraph_docs::combined::build_combined_docs(&registry, group_name)?;
+        out.push_str(&format!(
+            "Step 5/5 — Combined documents: {} docs, {} chunks, {} links ({} intra-repo, {} cross-repo), {} sources, {} BFS discoveries, {} embeddings\n",
+            doc_stats.documents,
+            doc_stats.chunks,
+            doc_stats.links,
+            doc_stats.intra_repo_links,
+            doc_stats.cross_repo_links,
+            doc_stats.sources,
+            bfs_discovered,
+            doc_stats.embeddings
+        ));
+    }
 
     // Start watchers + CLAUDE.md
     if let Some(group) = registry.groups.get(group_name) {

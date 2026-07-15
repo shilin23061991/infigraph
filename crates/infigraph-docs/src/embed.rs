@@ -100,6 +100,81 @@ pub fn update_doc_embeddings(
     Ok(count)
 }
 
+/// Store doc chunk embeddings in Postgres pgvector (remote mode).
+/// Embeds new/changed chunks plus any store chunks missing from pgvector.
+#[cfg(feature = "remote")]
+pub fn update_doc_embeddings_remote(
+    store: &DocStore,
+    pg: &infigraph_core::meta::PostgresMetaStore,
+    _new_chunks: &[&Chunk],
+    changed_files: &[&str],
+) -> Result<usize> {
+    let existing_ids: std::collections::HashSet<String> = pg
+        .all_embeddings("doc_chunk")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+
+    let changed_set: std::collections::HashSet<&str> = changed_files.iter().copied().collect();
+
+    // All chunks currently in the store (id, text)
+    let all_store_chunks = store.get_all_chunks().unwrap_or_default();
+
+    // Embed: (1) chunks from changed files, (2) chunks missing from pgvector
+    let to_embed: Vec<(&str, &str)> = all_store_chunks
+        .iter()
+        .filter(|(id, _)| {
+            let doc_file = id.split("::chunk_").next().unwrap_or("");
+            if changed_set.contains(doc_file) {
+                return true;
+            }
+            !existing_ids.contains(id.as_str())
+        })
+        .map(|(id, text)| (id.as_str(), text.as_str()))
+        .collect();
+
+    let mut all_embeddings: Vec<(String, Vec<f32>)> = Vec::new();
+
+    if !to_embed.is_empty() {
+        let embedder = doc_embedder();
+        const BATCH: usize = 256;
+        let results: Vec<Vec<(String, Vec<f32>)>> = to_embed
+            .par_chunks(BATCH)
+            .map(|chunk| {
+                let emb = Arc::clone(&embedder);
+                let texts: Vec<&str> = chunk.iter().map(|(_, t)| *t).collect();
+                let vecs = emb.embed_batch(&texts).unwrap_or_default();
+                chunk
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, (id, _))| vecs.get(i).map(|v| (id.to_string(), v.clone())))
+                    .collect()
+            })
+            .collect();
+        all_embeddings = results.into_iter().flatten().collect();
+    }
+
+    let count = all_embeddings.len();
+    if !all_embeddings.is_empty() {
+        pg.upsert_embeddings_bulk(&all_embeddings, "doc_chunk")?;
+    }
+
+    // Clean up orphan doc_chunk embeddings
+    let valid_ids: std::collections::HashSet<&str> =
+        all_store_chunks.iter().map(|(id, _)| id.as_str()).collect();
+    let orphans: Vec<String> = existing_ids
+        .iter()
+        .filter(|id| !valid_ids.contains(id.as_str()))
+        .cloned()
+        .collect();
+    if !orphans.is_empty() {
+        pg.delete_embeddings(&orphans)?;
+    }
+
+    Ok(count + valid_ids.len().saturating_sub(count))
+}
+
 fn doc_path_context(file: &str) -> Option<String> {
     let parts: Vec<&str> = file.split('/').collect();
     if parts.len() <= 1 {

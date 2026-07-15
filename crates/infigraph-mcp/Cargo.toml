@@ -39,7 +39,7 @@ default = ["kompress"]
 kompress = ["dep:ort", "dep:ndarray", "dep:tokenizers"]
 neo4j = ["infigraph-core/neo4j"]
 postgres = ["infigraph-core/postgres"]
-remote = ["neo4j", "postgres"]
+remote = ["neo4j", "postgres", "infigraph-docs/remote"]
 
 [lib]
 name = "infigraph_mcp"

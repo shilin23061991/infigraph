@@ -24,6 +24,7 @@ pub struct DocIndex {
     root: PathBuf,
     db_path: PathBuf,
     store: Option<DocStore>,
+    skip_file_embeddings: bool,
 }
 
 pub struct DocIndexResult {
@@ -31,6 +32,8 @@ pub struct DocIndexResult {
     pub indexed_files: usize,
     pub total_chunks: usize,
     pub bfs_discovered: usize,
+    pub new_chunks: Vec<Chunk>,
+    pub changed_files: Vec<String>,
 }
 
 impl DocIndex {
@@ -42,6 +45,7 @@ impl DocIndex {
             root: root.to_path_buf(),
             db_path,
             store: None,
+            skip_file_embeddings: false,
         })
     }
 
@@ -73,6 +77,10 @@ impl DocIndex {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn set_skip_file_embeddings(&mut self, skip: bool) {
+        self.skip_file_embeddings = skip;
     }
 
     pub fn clean(&mut self) -> Result<()> {
@@ -111,6 +119,8 @@ impl DocIndex {
                 indexed_files: 0,
                 total_chunks: 0,
                 bfs_discovered: 0,
+                new_chunks: vec![],
+                changed_files: vec![],
             });
         }
 
@@ -168,7 +178,10 @@ impl DocIndex {
             store.upsert_all_parquet(&docs, &chunks)?;
         }
 
-        if total_chunks > 0 {
+        let result_chunks: Vec<Chunk> = results.iter().flat_map(|(_, c)| c.clone()).collect();
+        let result_changed: Vec<String> = results.iter().map(|(d, _)| d.file.clone()).collect();
+
+        if total_chunks > 0 && !self.skip_file_embeddings {
             let all_chunks: Vec<&Chunk> = results.iter().flat_map(|(_, c)| c.iter()).collect();
             let changed_files: Vec<&str> = results.iter().map(|(d, _)| d.file.as_str()).collect();
             embed::update_doc_embeddings(store, &self.root, &all_chunks, &changed_files)?;
@@ -223,6 +236,8 @@ impl DocIndex {
             indexed_files: indexed,
             total_chunks,
             bfs_discovered,
+            new_chunks: result_chunks,
+            changed_files: result_changed,
         })
     }
 

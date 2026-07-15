@@ -39,7 +39,7 @@ default = ["kompress"]
 kompress = ["infigraph-mcp/kompress"]
 neo4j = ["infigraph-core/neo4j"]
 postgres = ["infigraph-core/postgres"]
-remote = ["neo4j", "postgres"]
+remote = ["neo4j", "postgres", "infigraph-docs/remote"]
 
 [dependencies]
 infigraph-core.workspace = true
