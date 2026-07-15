@@ -1,4 +1,6 @@
+mod backend;
 pub mod cozo_store;
+mod kuzu_backend;
 pub mod parquet_loader;
 mod queries;
 mod schema;
@@ -11,7 +13,9 @@ pub(crate) mod store_util;
 mod store_write;
 pub mod test_templates;
 
+pub use backend::GraphBackend;
 pub use cozo_store::CozoStore;
+pub use kuzu_backend::KuzuBackend;
 pub use queries::{
     format_skeleton, ApiSymbol, BranchInfo, CoverageRow, ExampleTest, FileDeps, GraphQuery,
     HierarchyNode, ImpactRow, ReferenceRow, SkeletonSymbol, SymbolDetail, SymbolRow, TestContext,

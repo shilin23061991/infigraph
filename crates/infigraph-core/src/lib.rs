@@ -158,7 +158,13 @@ impl Infigraph {
             None
         };
 
+        let write_start = std::time::Instant::now();
         if !extractions.is_empty() {
+            eprintln!(
+                "Writing: {} files ({} mode)",
+                indexed,
+                if use_csv { "bulk-parquet" } else { "per-file" }
+            );
             if use_csv {
                 if !existing_hashes.is_empty() {
                     let conn = store.connection()?;
@@ -231,6 +237,10 @@ impl Infigraph {
             store.upsert_folders_bulk_conn(&conn, &file_paths)?;
         }
 
+        if !extractions.is_empty() {
+            eprintln!("Write complete: {}s", write_start.elapsed().as_secs());
+        }
+
         // Prune stale files: remove entries for files that no longer exist on disk
         {
             let current_files: std::collections::HashSet<String> = files
@@ -256,6 +266,10 @@ impl Infigraph {
         }
 
         // resolve runs under the same write lock (creates CALLS/INHERITS edges)
+        if !extractions.is_empty() {
+            eprintln!("Resolving: calls + inheritance for {} files", indexed);
+        }
+        let resolve_start = std::time::Instant::now();
         let resolve_stats = resolve::resolve_calls_incremental(store, &extractions, None)
             .unwrap_or_else(|e| {
                 eprintln!("warning: call resolution failed: {e}");
@@ -267,6 +281,14 @@ impl Infigraph {
                     inherits_resolved: 0,
                 }
             });
+        if !extractions.is_empty() {
+            eprintln!(
+                "Resolve complete: {}s ({} resolved, {} unresolved)",
+                resolve_start.elapsed().as_secs(),
+                resolve_stats.resolved,
+                resolve_stats.unresolved
+            );
+        }
 
         drop(_write_lock);
 

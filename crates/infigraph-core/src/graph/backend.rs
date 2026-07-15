@@ -1,0 +1,89 @@
+use std::collections::HashMap;
+
+use anyhow::Result;
+
+use crate::learned::LearnedStore;
+use crate::model::FileExtraction;
+use crate::resolve::ResolveStats;
+
+use super::{
+    ApiSymbol, BranchInfo, FileDeps, GraphStats, ImpactRow, ReferenceRow, SymbolDetail, SymbolRow,
+    TestContext, TestCoverage, TypeHierarchy,
+};
+
+/// Backend-agnostic graph storage interface.
+///
+/// KuzuBackend wraps the existing embedded Kùzu store (local mode).
+/// Neo4jBackend (Phase 2) connects to a sidecar via Bolt (remote mode).
+/// All methods are synchronous — async backends use internal `block_on`.
+pub trait GraphBackend: Send + Sync {
+    // ── Lifecycle / metadata ─────────────────────────────────────────
+
+    fn stats(&self) -> Result<GraphStats>;
+    fn get_file_hashes(&self) -> Result<HashMap<String, String>>;
+    fn get_all_symbols(&self) -> Result<Vec<(String, String, String, String)>>;
+
+    // ── Read: symbol queries ─────────────────────────────────────────
+
+    fn symbols_in_file(&self, file: &str) -> Result<Vec<SymbolRow>>;
+    fn find_symbol_by_id(&self, id: &str) -> Result<Option<SymbolDetail>>;
+    fn symbols_in_range(&self, file: &str, start: u32, end: u32) -> Result<Vec<SymbolDetail>>;
+    fn skeleton(&self, file: &str) -> Result<String>;
+
+    // ── Read: graph traversal ────────────────────────────────────────
+
+    fn callers_of(&self, symbol_id: &str) -> Result<Vec<String>>;
+    fn callees_of(&self, symbol_id: &str) -> Result<Vec<String>>;
+    fn branches_of(&self, symbol_id: &str) -> Result<Vec<BranchInfo>>;
+    fn transitive_impact(&self, id: &str, max_depth: u32) -> Result<Vec<ImpactRow>>;
+    fn find_all_references(&self, id: &str) -> Result<Vec<ReferenceRow>>;
+    fn cross_cutting_for(&self, id: &str) -> Result<Vec<(String, String)>>;
+
+    // ── Read: aggregate queries ──────────────────────────────────────
+
+    fn get_api_surface(&self) -> Result<Vec<ApiSymbol>>;
+    fn get_file_deps(&self, file: &str) -> Result<FileDeps>;
+    fn get_type_hierarchy(&self, id: &str, max_depth: u32) -> Result<TypeHierarchy>;
+    fn get_test_coverage(&self) -> Result<TestCoverage>;
+    fn generate_test_context(
+        &self,
+        file_filter: Option<&str>,
+        limit: usize,
+        test_type: Option<&str>,
+    ) -> Result<TestContext>;
+
+    // ── Read: raw query ──────────────────────────────────────────────
+
+    fn raw_query(&self, query: &str) -> Result<Vec<Vec<String>>>;
+
+    // ── Write ────────────────────────────────────────────────────────
+
+    /// Insert a single file extraction (delete existing + insert).
+    fn upsert_file(&self, extraction: &FileExtraction) -> Result<()>;
+
+    /// Bulk write: delete stale data for given files, bulk-load all
+    /// extractions, and upsert folder hierarchy. Owns the full
+    /// delete-stale → bulk-insert → folders pipeline.
+    /// `existing_hashes` being empty signals a fresh index (no deletes needed).
+    fn upsert_files_bulk(
+        &self,
+        extractions: &[FileExtraction],
+        existing_hashes_empty: bool,
+    ) -> Result<()>;
+
+    /// Remove a single file and all its symbols/edges from the graph.
+    fn remove_file(&self, file: &str) -> Result<()>;
+
+    /// Derive TESTED_BY edges from naming conventions.
+    fn derive_tested_by_edges(&self) -> Result<usize>;
+
+    // ── Resolve ──────────────────────────────────────────────────────
+
+    /// Run call/inheritance resolution for the given extractions.
+    /// Backend owns the raw Cypher — callers don't need a Connection.
+    fn resolve_calls(
+        &self,
+        extractions: &[FileExtraction],
+        learned: Option<&LearnedStore>,
+    ) -> Result<ResolveStats>;
+}
