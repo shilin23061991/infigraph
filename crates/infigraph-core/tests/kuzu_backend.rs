@@ -159,6 +159,35 @@ fn test_backend_resolve_calls() {
 }
 
 #[test]
+fn test_backend_traversal_after_resolve() {
+    let (_dir, backend) = make_backend();
+    let extractions = fixture();
+    backend.upsert_files_bulk(&extractions, true).expect("bulk");
+    backend.resolve_calls(&extractions, None).expect("resolve");
+
+    let callees = backend.callees_of("src/main.py::main").expect("callees");
+    assert!(
+        callees.iter().any(|c| c.contains("helper")),
+        "main should call helper, got: {:?}",
+        callees
+    );
+
+    let callers = backend.callers_of("src/main.py::helper").expect("callers");
+    assert!(
+        callers.iter().any(|c| c.contains("main")),
+        "helper should be called by main, got: {:?}",
+        callers
+    );
+
+    let callees_cross = backend.callees_of("src/main.py::main").expect("callees");
+    assert!(
+        callees_cross.iter().any(|c| c.contains("process")),
+        "main should call process cross-file, got: {:?}",
+        callees_cross
+    );
+}
+
+#[test]
 fn test_backend_remove_file() {
     let (_dir, backend) = make_backend();
     backend.upsert_files_bulk(&fixture(), true).expect("bulk");
