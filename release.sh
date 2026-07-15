@@ -90,7 +90,7 @@ for TARGET in "${TARGETS[@]}"; do
   echo "→ Building ${TARGET}..."
   rustup target add "$TARGET" 2>/dev/null || true
   cargo clean -p infigraph-cli -p infigraph-mcp -p infigraph-core -p infigraph-languages --target "$TARGET" 2>/dev/null || true
-  cargo build --release --target "$TARGET" -p infigraph-cli -p infigraph-mcp
+  cargo build --release --target "$TARGET" -p infigraph-cli -p infigraph-mcp --features remote
 
   # Sign (macOS only)
   if [[ "$OS" == "Darwin" ]]; then
