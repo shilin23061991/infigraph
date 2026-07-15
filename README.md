@@ -274,6 +274,7 @@ infigraph group build my-org    # parallel indexing via rayon
 **What changes in remote mode:**
 - Code graph → Neo4j (concurrent writes, shared across repos)
 - Registry/sessions → Postgres (persistent across container restarts)
+- Search/semantic_search → Neo4j symbols + pgvector embeddings (brute-force vector scoring)
 - Namespace prefixing prevents collisions (`svc-auth/src/main.rs` vs `svc-gateway/src/main.rs`)
 - Group build indexes repos in parallel (Kùzu is sequential)
 

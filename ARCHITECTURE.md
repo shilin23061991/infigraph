@@ -115,6 +115,8 @@ for each symbol:
 
 This keeps vector loading fast (sequential read, no parsing overhead) and keeps vectors out of KuzuDB where columnar storage would add overhead for the cosine similarity workload.
 
+In **remote mode** (`--features remote`), embeddings are stored in Postgres + pgvector (`embeddings` table with `vector(256)` column). The search path materializes vectors into memory via `PostgresMetaStore::all_embeddings("symbol")` and uses brute-force cosine scoring instead of HNSW.
+
 ---
 
 ## 4. Graph Schema

@@ -35,7 +35,8 @@ Set `INFIGRAPH_BACKEND=neo4j` to activate remote mode. Default is `kuzu` (embedd
 | Groups | JSON file | Postgres tables `groups`, `group_repos` |
 | Sessions | `.infigraph/sessions/` | Postgres table `sessions` |
 | File hashes | Kùzu node properties | Postgres table `file_hashes` |
-| Embeddings | `.infigraph/embeddings.bin` | Postgres + pgvector (planned) |
+| Embeddings | `.infigraph/embeddings.bin` | Postgres + pgvector |
+| Search | Local BM25 + HNSW + grep | Neo4j symbols + pgvector brute-force |
 
 ### Namespace Prefixing
 
@@ -155,6 +156,37 @@ pub trait GraphBackend: Send + Sync {
 Two implementations:
 - **`KuzuBackend`** — wraps existing `GraphStore` + `GraphQuery`. Zero behavior change from pre-trait code.
 - **`Neo4jBackend`** — uses `neo4rs` crate (async Bolt driver). `UNWIND` batches for bulk writes. Concurrent-write safe.
+
+### `get_symbols_for_search()`
+
+The `GraphBackend` trait includes `get_symbols_for_search()` — returns all symbols as 7 columns in fixed order: `[id, name, kind, file, docstring, start_line, end_line]`. The default implementation uses `raw_query` (safe for Kùzu where column order matches `RETURN` order). Neo4j overrides this with named column access because `raw_query` uses `HashMap::into_values().collect()` — which produces **random column order**.
+
+## Search in Remote Mode
+
+In remote mode, `search` and `semantic_search` load data from Neo4j + pgvector instead of local files:
+
+| Data | Local source | Remote source |
+|------|-------------|---------------|
+| Symbol rows (BM25 index) | Kùzu `raw_query` | `Neo4jBackend::get_symbols_for_search()` |
+| Embeddings (vector scores) | `.infigraph/embeddings.bin` | `PostgresMetaStore::all_embeddings("symbol")` |
+| HNSW index | `.infigraph/hnsw.bin` | Not used — brute-force fallback |
+
+**How it works:**
+
+1. `is_remote_mode()` checks `#[cfg(feature = "remote")]` + `INFIGRAPH_BACKEND=neo4j`
+2. `get_or_build_search_ctx` splits into `get_search_data_local()` / `get_search_data_remote()`
+3. Remote path: `Neo4jBackend::connect_from_env()` → `get_symbols_for_search()` for BM25 rows
+4. Remote path: `PostgresMetaStore::connect_from_env()` → `all_embeddings("symbol")` for vector scores
+5. Vector scoring uses `brute_force_vector_scores` (no HNSW index in remote mode)
+6. BM25 + vector scores fuse via existing `compute_raw_scores` / `hybrid_search`
+
+**Brute-force is correct** for remote mode — HNSW only wins above ~200K embeddings, and symbol counts per deployment stay well below that threshold.
+
+### Known Gaps
+
+- **Symbol embedding write path:** No production code currently writes `kind="symbol"` embeddings to pgvector. `all_embeddings("symbol")` returns empty, so search degrades to BM25-only (keyword search still works, vector ranking does not). Needs an `update_symbol_embeddings_remote()` function analogous to `update_doc_embeddings_remote()`.
+- **Project scoping:** Remote search queries all symbols in Neo4j (all repos), not filtered by `path` argument. Local mode is per-project. Acceptable for org-wide search; may need `WHERE s.file STARTS WITH $prefix` filter for single-repo queries.
+- **Cache invalidation:** Uses `UNIX_EPOCH` sentinel for mtime (no local `embeddings.bin`). Cache effectively never invalidates within a session. Future: use pgvector row count or `max(updated_at)`.
 
 ## Testing
 

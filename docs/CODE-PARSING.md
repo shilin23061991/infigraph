@@ -521,12 +521,17 @@ Both initialized via `init_embedder` / `best_embedder` (`embed/mod.rs:311-340`).
 
 ### Storage
 
+**Local mode:**
 - Embeddings: `.infigraph/embeddings.bin` (code), `.infigraph/docs_embeddings.bin` (docs)
 - HNSW index: `.infigraph/hnsw_index.usearch` + `.meta`
 
+**Remote mode** (`--features remote`, `INFIGRAPH_BACKEND=neo4j`):
+- Embeddings: Postgres + pgvector (`embeddings` table, `kind` column separates `symbol` vs `doc_chunk`)
+- HNSW index: not used — brute-force scoring via materialized vectors from `all_embeddings(kind)`
+
 ### HNSW threshold
 
-HNSW index is built only when the symbol/chunk count exceeds a threshold (100K+ for code, 200K+ for docs) or when an HNSW index already exists. Below the threshold, brute-force linear scan is used (fast enough for smaller codebases).
+HNSW index is built only when the symbol/chunk count exceeds a threshold (100K+ for code, 200K+ for docs) or when an HNSW index already exists. Below the threshold, brute-force linear scan is used (fast enough for smaller codebases). Remote mode always uses brute-force.
 
 ---
 
