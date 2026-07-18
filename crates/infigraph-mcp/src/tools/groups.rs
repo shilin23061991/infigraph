@@ -45,11 +45,17 @@ pub fn tool_group_create(args: &Value) -> Result<String> {
         .get("name")
         .and_then(|n| n.as_str())
         .context("missing 'name' argument")?;
+    let org = args
+        .get("org")
+        .and_then(|o| o.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(infigraph_core::multi::default_org);
 
     let mut registry = Registry::load()?;
-    registry.create_group(name)?;
+    let key = infigraph_core::multi::qualified_group_name(&org, name);
+    registry.create_group_with_org(name, &org)?;
 
-    Ok(format!("Group '{}' created.", name))
+    Ok(format!("Group '{}' created.", key))
 }
 
 pub fn tool_group_add(args: &Value) -> Result<String> {
@@ -485,13 +491,15 @@ pub fn tool_group_build(args: &Value) -> Result<String> {
         ));
     }
 
-    // Start watchers + CLAUDE.md
-    if let Some(group) = registry.groups.get(group_name) {
-        for repo_name in &group.repos {
-            if let Some(entry) = registry.repos.get(repo_name) {
-                let p = entry.path.to_string_lossy();
-                auto_start_watch(&p);
-                let _ = infigraph_core::claude_md::ensure_project_claude_md(&entry.path);
+    // Start watchers + CLAUDE.md (skip watchers in remote mode — reindex via webhooks)
+    if !is_remote {
+        if let Some(group) = registry.groups.get(group_name) {
+            for repo_name in &group.repos {
+                if let Some(entry) = registry.repos.get(repo_name) {
+                    let p = entry.path.to_string_lossy();
+                    auto_start_watch(&p);
+                    let _ = infigraph_core::claude_md::ensure_project_claude_md(&entry.path);
+                }
             }
         }
     }

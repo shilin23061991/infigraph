@@ -33,12 +33,16 @@ pub struct RepoEntry {
     pub languages: Vec<String>,
     pub symbol_count: u64,
     pub module_count: u64,
+    #[serde(default)]
+    pub last_indexed_commit: Option<String>,
 }
 
 /// A group of repositories (e.g., microservice architecture).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Group {
     pub name: String,
+    #[serde(default)]
+    pub org: String,
     pub repos: Vec<String>,
     pub contracts: Vec<Contract>,
 }
@@ -112,6 +116,7 @@ impl Registry {
             .collect();
 
         let abs_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let commit = git_head_commit(path);
 
         self.repos.insert(
             name.to_string(),
@@ -121,20 +126,28 @@ impl Registry {
                 languages: langs,
                 symbol_count: stats.symbols,
                 module_count: stats.modules,
+                last_indexed_commit: commit,
             },
         );
         self.save()
     }
 
-    /// Create a new group.
+    /// Create a new group. If `org` is non-empty, the group key becomes `org/name`
+    /// to prevent collisions when multiple teams share one Postgres/Neo4j instance.
     pub fn create_group(&mut self, name: &str) -> Result<()> {
-        if self.groups.contains_key(name) {
-            anyhow::bail!("group '{}' already exists", name);
+        self.create_group_with_org(name, &default_org())
+    }
+
+    pub fn create_group_with_org(&mut self, name: &str, org: &str) -> Result<()> {
+        let key = qualified_group_name(org, name);
+        if self.groups.contains_key(&key) {
+            anyhow::bail!("group '{}' already exists", key);
         }
         self.groups.insert(
-            name.to_string(),
+            key,
             Group {
                 name: name.to_string(),
+                org: org.to_string(),
                 repos: Vec::new(),
                 contracts: Vec::new(),
             },
@@ -506,9 +519,47 @@ pub fn index_group(
         for (_, entry) in &entries {
             let tg_dir = entry.path.join(".infigraph");
             if tg_dir.exists() {
+                // Preserve session data across full reindex
+                let sess_dir = tg_dir.join("sessions");
+                let sess_bak = entry.path.join(".infigraph-sessions-backup");
+                let had_sessions = sess_dir.exists();
+                if had_sessions {
+                    let _ = std::fs::rename(&sess_dir, &sess_bak);
+                }
                 std::fs::remove_dir_all(&tg_dir)?;
+                if had_sessions {
+                    std::fs::create_dir_all(&tg_dir)?;
+                    let _ = std::fs::rename(&sess_bak, &sess_dir);
+                }
             }
         }
+    }
+
+    // Skip repos whose HEAD commit hasn't changed since last index (incremental)
+    let mut to_index: Vec<(String, RepoEntry)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    if full {
+        to_index = entries;
+    } else {
+        for (name, entry) in entries {
+            let current_commit = git_head_commit(&entry.path);
+            let unchanged = match (&entry.last_indexed_commit, &current_commit) {
+                (Some(prev), Some(curr)) => prev == curr,
+                _ => false,
+            };
+            if unchanged {
+                skipped.push(name);
+            } else {
+                to_index.push((name, entry));
+            }
+        }
+    }
+    if !skipped.is_empty() {
+        eprintln!(
+            "[group] skipping {} unchanged repos: {}",
+            skipped.len(),
+            skipped.join(", ")
+        );
     }
 
     // Neo4j backend supports concurrent writes — safe to parallelize
@@ -516,13 +567,19 @@ pub fn index_group(
         .map(|v| v == "neo4j")
         .unwrap_or(false);
 
+    let org = group.org.clone();
     let index_one =
         |repo_name: &str, entry: &RepoEntry| -> Result<(String, usize, usize, Infigraph)> {
             let lang_registry = build_registry()?;
             let mut prism = Infigraph::open(&entry.path, lang_registry)?;
             prism.init()?;
             if prism.backend().is_some() {
-                prism.set_namespace(repo_name);
+                let ns = if org.is_empty() {
+                    repo_name.to_string()
+                } else {
+                    format!("{org}/{repo_name}")
+                };
+                prism.set_namespace(&ns);
             }
             let result = prism.index()?;
             Ok((
@@ -537,14 +594,14 @@ pub fn index_group(
         use rayon::prelude::*;
         eprintln!(
             "[group] parallel indexing {} repos via Neo4j backend",
-            entries.len()
+            to_index.len()
         );
-        entries
+        to_index
             .par_iter()
             .map(|(name, entry)| index_one(name, entry))
             .collect()
     } else {
-        entries
+        to_index
             .iter()
             .map(|(name, entry)| index_one(name, entry))
             .collect()
@@ -584,6 +641,20 @@ fn registry_path() -> Result<PathBuf> {
     Ok(home.join(".infigraph").join("registry.json"))
 }
 
+/// Default org from `INFIGRAPH_ORG` env var. Empty string means no org scoping.
+pub fn default_org() -> String {
+    std::env::var("INFIGRAPH_ORG").unwrap_or_default()
+}
+
+/// Build the group key: `org/name` when org is non-empty, `name` otherwise.
+pub fn qualified_group_name(org: &str, name: &str) -> String {
+    if org.is_empty() {
+        name.to_string()
+    } else {
+        format!("{org}/{name}")
+    }
+}
+
 #[cfg(feature = "postgres")]
 fn is_remote_mode() -> bool {
     std::env::var("INFIGRAPH_BACKEND")
@@ -591,9 +662,104 @@ fn is_remote_mode() -> bool {
         .unwrap_or(false)
 }
 
+pub fn git_head_commit(repo_path: &Path) -> Option<String> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
 fn raw_query_prism(prism: &Infigraph, cypher: &str) -> Result<Vec<Vec<String>>> {
     prism
         .backend()
         .context("graph not initialized")?
         .raw_query(cypher)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_qualified_group_name_no_org() {
+        assert_eq!(qualified_group_name("", "backend"), "backend");
+    }
+
+    #[test]
+    fn test_qualified_group_name_with_org() {
+        assert_eq!(
+            qualified_group_name("aif-dev3x", "backend"),
+            "aif-dev3x/backend"
+        );
+    }
+
+    #[test]
+    fn test_create_group_with_org_stores_qualified_key() {
+        let mut registry = Registry::default();
+        registry.create_group_with_org("backend", "team-a").unwrap();
+        assert!(registry.groups.contains_key("team-a/backend"));
+        let group = &registry.groups["team-a/backend"];
+        assert_eq!(group.name, "backend");
+        assert_eq!(group.org, "team-a");
+    }
+
+    #[test]
+    fn test_create_group_with_empty_org_stores_plain_key() {
+        let mut registry = Registry::default();
+        registry.create_group_with_org("backend", "").unwrap();
+        assert!(registry.groups.contains_key("backend"));
+        let group = &registry.groups["backend"];
+        assert_eq!(group.org, "");
+    }
+
+    #[test]
+    fn test_org_isolation_different_orgs_same_name() {
+        let mut registry = Registry::default();
+        registry.create_group_with_org("backend", "team-a").unwrap();
+        registry.create_group_with_org("backend", "team-b").unwrap();
+        assert_eq!(registry.groups.len(), 2);
+        assert!(registry.groups.contains_key("team-a/backend"));
+        assert!(registry.groups.contains_key("team-b/backend"));
+    }
+
+    #[test]
+    fn test_create_group_duplicate_with_org_fails() {
+        let mut registry = Registry::default();
+        registry.create_group_with_org("backend", "team-a").unwrap();
+        let result = registry.create_group_with_org("backend", "team-a");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_create_group_uses_default_org() {
+        let mut registry = Registry::default();
+        registry.create_group("my-group").unwrap();
+        assert!(registry.groups.contains_key("my-group"));
+        assert_eq!(registry.groups["my-group"].org, "");
+    }
+
+    #[test]
+    fn test_group_serde_round_trip_with_org() {
+        let group = Group {
+            name: "backend".to_string(),
+            org: "team-x".to_string(),
+            repos: vec!["svc-a".to_string()],
+            contracts: vec![],
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        let loaded: Group = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.org, "team-x");
+        assert_eq!(loaded.name, "backend");
+    }
+
+    #[test]
+    fn test_group_serde_backwards_compat_missing_org() {
+        let json = r#"{"name":"old-group","repos":["svc"],"contracts":[]}"#;
+        let loaded: Group = serde_json::from_str(json).unwrap();
+        assert_eq!(loaded.org, "");
+        assert_eq!(loaded.name, "old-group");
+    }
 }

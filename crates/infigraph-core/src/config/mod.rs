@@ -215,8 +215,6 @@ fn extract_profile(detail: &str, kind: &str) -> String {
 }
 
 fn write_config_bindings(backend: &dyn GraphBackend, bindings: &[ConfigBinding]) -> Result<()> {
-    backend.raw_query("BEGIN TRANSACTION")?;
-
     let _ = backend.raw_query("MATCH (c:ConfigBinding) DETACH DELETE c");
 
     for b in bindings {
@@ -236,8 +234,6 @@ fn write_config_bindings(backend: &dyn GraphBackend, bindings: &[ConfigBinding])
             "MATCH (s:Symbol), (c:ConfigBinding) WHERE s.id = '{sym_esc}' AND c.id = '{id_esc}' CREATE (s)-[:HAS_CONFIG]->(c)"
         ));
     }
-
-    backend.raw_query("COMMIT")?;
 
     Ok(())
 }

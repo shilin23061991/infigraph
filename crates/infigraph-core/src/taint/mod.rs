@@ -418,8 +418,6 @@ fn find_sanitizer_name(lines: &[String], current_offset: usize, category: &str) 
 }
 
 fn write_taint_flows(backend: &dyn GraphBackend, flows: &[TaintFlow]) -> Result<()> {
-    backend.raw_query("BEGIN TRANSACTION")?;
-
     let _ = backend.raw_query("MATCH ()-[r:TAINT_FLOW]->() DELETE r");
 
     for flow in flows {
@@ -437,8 +435,6 @@ fn write_taint_flows(backend: &dyn GraphBackend, flows: &[TaintFlow]) -> Result<
              CREATE (s)-[:TAINT_FLOW {{source_kind: '{src_esc}', sink_kind: '{sink_esc}', path: '{path_esc}'}}]->(s)"
         ));
     }
-
-    backend.raw_query("COMMIT")?;
 
     Ok(())
 }
