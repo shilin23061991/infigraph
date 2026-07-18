@@ -51,78 +51,81 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
     }
 
     // Detect cross-cutting concerns, taint, etc. — skip when no files changed (incremental no-op)
-    if result.indexed_files > 0 {
-        if let Some(store) = prism.store() {
-            // Docstring-only analyzers (no file I/O)
-            match infigraph_core::concerns::detect_cross_cutting(store) {
-                Ok(matches) if !matches.is_empty() => {
-                    println!("Detected {} cross-cutting concerns", matches.len());
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("warning: concern detection failed: {e}"),
+    if result.indexed_files > 0 && prism.backend().is_some() {
+        // Docstring-only analyzers (no file I/O)
+        match infigraph_core::concerns::detect_cross_cutting(prism.backend().unwrap()) {
+            Ok(matches) if !matches.is_empty() => {
+                println!("Detected {} cross-cutting concerns", matches.len());
             }
-            match infigraph_core::config::detect_config_bindings(store) {
-                Ok(bindings) if !bindings.is_empty() => {
-                    println!("Detected {} config bindings", bindings.len());
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("warning: config binding detection failed: {e}"),
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: concern detection failed: {e}"),
+        }
+        match infigraph_core::config::detect_config_bindings(prism.backend().unwrap()) {
+            Ok(bindings) if !bindings.is_empty() => {
+                println!("Detected {} config bindings", bindings.len());
             }
-            match infigraph_core::reflection::detect_reflection_sites(store, root) {
-                Ok(sites) if !sites.is_empty() => {
-                    let resolved = sites.iter().filter(|s| s.resolved_to.is_some()).count();
-                    println!(
-                        "Detected {} reflection sites ({} resolved)",
-                        sites.len(),
-                        resolved
-                    );
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("warning: reflection detection failed: {e}"),
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: config binding detection failed: {e}"),
+        }
+        match infigraph_core::reflection::detect_reflection_sites(prism.backend().unwrap(), root) {
+            Ok(sites) if !sites.is_empty() => {
+                let resolved = sites.iter().filter(|s| s.resolved_to.is_some()).count();
+                println!(
+                    "Detected {} reflection sites ({} resolved)",
+                    sites.len(),
+                    resolved
+                );
             }
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: reflection detection failed: {e}"),
+        }
 
-            // Source-reading analyzers — build shared cache once, pass to all three
-            match infigraph_core::taint::build_source_cache(store, root) {
-                Ok((functions, cache)) => {
-                    match infigraph_core::taint::detect_taint_flows_with_cache(
-                        store, &functions, &cache,
-                    ) {
-                        Ok(flows) if !flows.is_empty() => {
-                            let active = flows.iter().filter(|f| !f.sanitized).count();
-                            println!(
-                                "Detected {} taint flows ({} active, {} sanitized)",
-                                flows.len(),
-                                active,
-                                flows.len() - active
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(e) => eprintln!("warning: taint analysis failed: {e}"),
+        // Source-reading analyzers — build shared cache once, pass to all three
+        let taint_backend = prism.backend().unwrap();
+        match infigraph_core::taint::build_source_cache(taint_backend, root) {
+            Ok((functions, cache)) => {
+                match infigraph_core::taint::detect_taint_flows_with_cache(
+                    taint_backend,
+                    &functions,
+                    &cache,
+                ) {
+                    Ok(flows) if !flows.is_empty() => {
+                        let active = flows.iter().filter(|f| !f.sanitized).count();
+                        println!(
+                            "Detected {} taint flows ({} active, {} sanitized)",
+                            flows.len(),
+                            active,
+                            flows.len() - active
+                        );
                     }
-                    match infigraph_core::taint::interprocedural::detect_interprocedural_taint_with_cache(store, &functions, &cache, 5) {
+                    Ok(_) => {}
+                    Err(e) => eprintln!("warning: taint analysis failed: {e}"),
+                }
+                match infigraph_core::taint::interprocedural::detect_interprocedural_taint_with_cache(taint_backend, &functions, &cache, 5) {
                     Ok(flows) if !flows.is_empty() => {
                         println!("Detected {} inter-procedural taint flows", flows.len());
                     }
                     Ok(_) => {}
                     Err(e) => eprintln!("warning: inter-procedural taint failed: {e}"),
                 }
-                    match infigraph_core::taint::dynamic_urls::detect_dynamic_urls_with_cache(
-                        store, &functions, &cache,
-                    ) {
-                        Ok(urls) if !urls.is_empty() => {
-                            let matched = urls.iter().filter(|u| u.matched_route.is_some()).count();
-                            println!(
-                                "Detected {} dynamic URLs ({} matched to routes)",
-                                urls.len(),
-                                matched
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(e) => eprintln!("warning: dynamic URL detection failed: {e}"),
+                match infigraph_core::taint::dynamic_urls::detect_dynamic_urls_with_cache(
+                    taint_backend,
+                    &functions,
+                    &cache,
+                ) {
+                    Ok(urls) if !urls.is_empty() => {
+                        let matched = urls.iter().filter(|u| u.matched_route.is_some()).count();
+                        println!(
+                            "Detected {} dynamic URLs ({} matched to routes)",
+                            urls.len(),
+                            matched
+                        );
                     }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("warning: dynamic URL detection failed: {e}"),
                 }
-                Err(e) => eprintln!("warning: source cache build failed: {e}"),
             }
+            Err(e) => eprintln!("warning: source cache build failed: {e}"),
         }
     }
 
@@ -166,7 +169,7 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
 
     // Compute and save embeddings — only for new/changed symbols
     if no_embed {
-        auto_scip(root, &result, prism.store())?;
+        auto_scip(root, &result, prism.backend())?;
         return Ok(());
     }
     {
@@ -184,8 +187,8 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
         }
 
         if !done {
-            let store = prism.store().context("graph not initialized")?;
-            let count = infigraph_core::embed::update_embeddings(store, root, &changed)?;
+            let backend = prism.backend().context("graph not initialized")?;
+            let count = infigraph_core::embed::update_embeddings(backend, root, &changed)?;
             println!("Saved {} embeddings to .infigraph/embeddings.bin", count);
         }
     }
@@ -412,7 +415,7 @@ pub(crate) fn on_path(cmd: &str) -> bool {
 pub(crate) fn import_scip_and_cleanup(
     root: &Path,
     scip_path: Option<&std::path::Path>,
-    existing_store: Option<&infigraph_core::graph::GraphStore>,
+    existing_backend: Option<&dyn infigraph_core::graph::GraphBackend>,
 ) {
     let scip_out = scip_path
         .map(|p| p.to_path_buf())
@@ -421,8 +424,8 @@ pub(crate) fn import_scip_and_cleanup(
         return;
     }
 
-    if let Some(store) = existing_store {
-        match infigraph_core::scip::import_scip_index(&scip_out, store, Some(root)) {
+    if let Some(backend) = existing_backend {
+        match backend.import_scip_index(&scip_out, Some(root)) {
             Ok(stats) => println!(
                 "Auto-SCIP: enriched {} symbols, {} added, {} references, {} new symbols, {} corrections learned",
                 stats.symbols_enriched, stats.relations_added, stats.references_added, stats.symbols_added, stats.corrections_learned
@@ -450,11 +453,11 @@ pub(crate) fn import_scip_and_cleanup(
     if prism.init().is_err() {
         return;
     }
-    let store = match prism.store() {
-        Some(s) => s,
+    let backend = match prism.backend() {
+        Some(b) => b,
         None => return,
     };
-    match infigraph_core::scip::import_scip_index(&scip_out, store, Some(root)) {
+    match backend.import_scip_index(&scip_out, Some(root)) {
         Ok(stats) => println!(
             "Auto-SCIP: enriched {} symbols, {} added, {} references, {} new symbols, {} corrections learned",
             stats.symbols_enriched, stats.relations_added, stats.references_added, stats.symbols_added, stats.corrections_learned
@@ -468,7 +471,7 @@ pub(crate) fn import_scip_and_cleanup(
 pub(crate) fn auto_scip(
     root: &Path,
     result: &infigraph_core::IndexResult,
-    store: Option<&infigraph_core::graph::GraphStore>,
+    backend: Option<&dyn infigraph_core::graph::GraphBackend>,
 ) -> Result<()> {
     use crate::scip_download;
     use std::collections::HashSet;
@@ -546,7 +549,7 @@ pub(crate) fn auto_scip(
                     indexer.binary_name,
                     extra_path,
                 ) {
-                    import_scip_and_cleanup(root, None, store);
+                    import_scip_and_cleanup(root, None, backend);
                 } else {
                     println!("Auto-SCIP: {primary} failed, falling back to {fallback}");
                     let fallback_args = ["index", "--build-tool", fallback];
@@ -557,7 +560,7 @@ pub(crate) fn auto_scip(
                         indexer.binary_name,
                         extra_path,
                     ) {
-                        import_scip_and_cleanup(root, None, store);
+                        import_scip_and_cleanup(root, None, backend);
                     }
                 }
             } else if run_scip_indexer(
@@ -567,7 +570,7 @@ pub(crate) fn auto_scip(
                 indexer.binary_name,
                 extra_path,
             ) {
-                import_scip_and_cleanup(root, None, store);
+                import_scip_and_cleanup(root, None, backend);
             }
             continue;
         }
@@ -579,7 +582,7 @@ pub(crate) fn auto_scip(
             indexer.binary_name,
             extra_path,
         ) {
-            import_scip_and_cleanup(root, None, store);
+            import_scip_and_cleanup(root, None, backend);
         }
     }
 
@@ -707,14 +710,14 @@ fn auto_scip_background(root: &Path, detected_languages: &std::collections::Hash
     if prism.init().is_err() {
         return;
     }
-    let store = match prism.store() {
-        Some(s) => s,
+    let backend = match prism.backend() {
+        Some(b) => b,
         None => return,
     };
 
     for (label, scip_path, success) in &results {
         if *success && scip_path.exists() {
-            match infigraph_core::scip::import_scip_index(scip_path, store, Some(root)) {
+            match backend.import_scip_index(scip_path, Some(root)) {
                 Ok(stats) => eprintln!(
                     "Auto-SCIP: {label} enriched {} symbols, {} added, {} references, {} new symbols, {} corrections learned",
                     stats.symbols_enriched, stats.relations_added, stats.references_added, stats.symbols_added, stats.corrections_learned
@@ -730,7 +733,10 @@ fn auto_scip_background(root: &Path, detected_languages: &std::collections::Hash
     // Embed any new symbols SCIP added (skips existing embeddings)
     let root_buf = root.to_path_buf();
     let pre_count = infigraph_core::embed::embedding_count(&root_buf);
-    match infigraph_core::embed::update_embeddings(store, &root_buf, &[]) {
+    let Some(backend) = prism.backend() else {
+        return;
+    };
+    match infigraph_core::embed::update_embeddings(backend, &root_buf, &[]) {
         Ok(n) => {
             let new = n.saturating_sub(pre_count);
             if new > 0 {

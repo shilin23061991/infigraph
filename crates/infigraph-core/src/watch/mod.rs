@@ -181,12 +181,12 @@ where
                     Ok(result) => {
                         changes_since_periodic += result.indexed_files;
 
-                        if let Some(store) = prism.store() {
+                        if let Some(backend) = prism.backend() {
                             let changed: Vec<&str> =
                                 result.extractions.iter().map(|e| e.file.as_str()).collect();
                             if !changed.is_empty() {
                                 if let Err(e) =
-                                    crate::embed::update_embeddings(store, root, &changed)
+                                    crate::embed::update_embeddings(backend, root, &changed)
                                 {
                                     eprintln!("[watch] batch embedding update failed: {e}");
                                 }
@@ -349,8 +349,8 @@ where
                                 .unwrap_or_else(|_| evt.path.to_string_lossy().replace('\\', "/"));
                             let mut affected_files = vec![evt.path.clone()];
 
-                            if let Some(store) = p.store() {
-                                let deps = get_cross_file_dependents(store, &changed_rel);
+                            if let Some(backend) = p.backend() {
+                                let deps = get_cross_file_dependents(backend, &changed_rel);
                                 for dep_rel in deps {
                                     let dep_abs = root_owned.join(&dep_rel);
                                     if dep_abs.exists() {
@@ -366,11 +366,10 @@ where
                                         r.indexed_files, r.total_files
                                     );
 
-                                    if let Some(store) = p.store() {
+                                    if let Some(backend) = p.backend() {
                                         let file_strs: Vec<String> =
                                             r.extractions.iter().map(|e| e.file.clone()).collect();
-                                        match crate::resolve::re_resolve_for_files(
-                                            store,
+                                        match backend.re_resolve_for_files(
                                             &file_strs,
                                             &r.extractions,
                                             None,
@@ -385,17 +384,21 @@ where
 
                                         let changed: Vec<&str> =
                                             r.extractions.iter().map(|e| e.file.as_str()).collect();
-                                        match crate::embed::update_embeddings(
-                                            store,
-                                            &root_owned,
-                                            &changed,
-                                        ) {
-                                            Ok(n) => {
-                                                eprintln!("[watch {prefix}] updated {n} embeddings")
+                                        if let Some(eb) = p.backend() {
+                                            match crate::embed::update_embeddings(
+                                                eb,
+                                                &root_owned,
+                                                &changed,
+                                            ) {
+                                                Ok(n) => {
+                                                    eprintln!(
+                                                        "[watch {prefix}] updated {n} embeddings"
+                                                    )
+                                                }
+                                                Err(e) => eprintln!(
+                                                    "[watch {prefix}] embedding update failed: {e}"
+                                                ),
                                             }
-                                            Err(e) => eprintln!(
-                                                "[watch {prefix}] embedding update failed: {e}"
-                                            ),
                                         }
                                     }
                                 }
@@ -426,18 +429,17 @@ where
 }
 
 /// Returns the relative paths of files that have cross-file CALLS edges to/from the given file.
-fn get_cross_file_dependents(store: &crate::graph::GraphStore, rel_path: &str) -> Vec<String> {
-    let conn = match store.connection() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
+fn get_cross_file_dependents(
+    backend: &dyn crate::graph::GraphBackend,
+    rel_path: &str,
+) -> Vec<String> {
     let escaped = rel_path.replace('\'', "\\'");
     let mut dependents = std::collections::HashSet::new();
 
     let q1 = format!(
         "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) WHERE a.file = '{escaped}' AND b.file <> '{escaped}' RETURN DISTINCT b.file"
     );
-    if let Ok(result) = conn.query(&q1) {
+    if let Ok(result) = backend.raw_query(&q1) {
         for row in result {
             if let Some(val) = row.first() {
                 dependents.insert(val.to_string());
@@ -448,7 +450,7 @@ fn get_cross_file_dependents(store: &crate::graph::GraphStore, rel_path: &str) -
     let q2 = format!(
         "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) WHERE b.file = '{escaped}' AND a.file <> '{escaped}' RETURN DISTINCT a.file"
     );
-    if let Ok(result) = conn.query(&q2) {
+    if let Ok(result) = backend.raw_query(&q2) {
         for row in result {
             if let Some(val) = row.first() {
                 dependents.insert(val.to_string());
@@ -461,20 +463,16 @@ fn get_cross_file_dependents(store: &crate::graph::GraphStore, rel_path: &str) -
 
 /// Returns true if the file has any resolved CALLS edges to/from symbols in other files.
 fn has_cross_file_calls(prism: &Infigraph, rel_path: &str) -> bool {
-    let store = match prism.store() {
-        Some(s) => s,
+    let backend = match prism.backend() {
+        Some(b) => b,
         None => return false,
-    };
-    let conn = match store.connection() {
-        Ok(c) => c,
-        Err(_) => return false,
     };
     let escaped = rel_path.replace('\'', "\\'");
     let q = format!(
         "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) WHERE a.file = '{escaped}' AND b.file <> '{escaped}' RETURN count(*) LIMIT 1"
     );
-    if let Ok(mut result) = conn.query(&q) {
-        if let Some(row) = result.next() {
+    if let Ok(result) = backend.raw_query(&q) {
+        if let Some(row) = result.first() {
             if let Some(val) = row.first() {
                 if val.to_string().parse::<u64>().unwrap_or(0) > 0 {
                     return true;
@@ -485,8 +483,8 @@ fn has_cross_file_calls(prism: &Infigraph, rel_path: &str) -> bool {
     let q2 = format!(
         "MATCH (a:Symbol)-[:CALLS]->(b:Symbol) WHERE b.file = '{escaped}' AND a.file <> '{escaped}' RETURN count(*) LIMIT 1"
     );
-    if let Ok(mut result) = conn.query(&q2) {
-        if let Some(row) = result.next() {
+    if let Ok(result) = backend.raw_query(&q2) {
+        if let Some(row) = result.first() {
             if let Some(val) = row.first() {
                 return val.to_string().parse::<u64>().unwrap_or(0) > 0;
             }

@@ -413,16 +413,14 @@ pub fn load_embeddings(path: &Path) -> Result<Vec<(String, Vec<f32>)>> {
 /// Loads existing embeddings, re-embeds symbols in `changed_files`, removes orphans,
 /// and saves back. If `changed_files` is empty, treats all symbols as changed (full rebuild).
 pub fn update_embeddings(
-    store: &crate::graph::GraphStore,
+    backend: &dyn crate::graph::GraphBackend,
     root: &Path,
     changed_files: &[&str],
 ) -> Result<usize> {
     use rayon::prelude::*;
     use std::sync::Arc;
 
-    let conn = store.connection()?;
-    let gq = crate::graph::GraphQuery::new(&conn);
-    let rows = gq.raw_query("MATCH (s:Symbol) RETURN s.id, s.name, s.kind, s.file, s.docstring, s.language, s.parameters, s.return_type")?;
+    let rows = backend.raw_query("MATCH (s:Symbol) RETURN s.id, s.name, s.kind, s.file, s.docstring, s.language, s.parameters, s.return_type")?;
     if rows.is_empty() {
         return Ok(0);
     }

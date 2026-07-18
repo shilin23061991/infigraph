@@ -101,8 +101,8 @@ pub fn tool_review(args: &Value) -> Result<String> {
     let context = args.get("context").and_then(|v| v.as_str());
     let group = args.get("group").and_then(|v| v.as_str());
 
-    let store = prism
-        .store()
+    let backend = prism
+        .backend()
         .context("not initialized -- run 'infigraph index' first")?;
     let registry = infigraph_languages::bundled_registry()?;
     let root = prism.root().to_path_buf();
@@ -114,13 +114,13 @@ pub fn tool_review(args: &Value) -> Result<String> {
             base_ref,
             limit,
             &registry,
-            store,
+            backend,
             group_name,
             &multi_reg,
             infigraph_languages::bundled_registry,
         )?
     } else {
-        infigraph_core::review::review(&root, base_ref, limit, &registry, store)?
+        infigraph_core::review::review(&root, base_ref, limit, &registry, backend)?
     };
 
     if !llm && !dry_run {
@@ -128,7 +128,7 @@ pub fn tool_review(args: &Value) -> Result<String> {
     }
 
     let (prompt, result) =
-        infigraph_core::review::llm::review_with_llm(&root, &report, store, dry_run, context)?;
+        infigraph_core::review::llm::review_with_llm(&root, &report, backend, dry_run, context)?;
 
     if dry_run {
         return Ok(prompt);
@@ -598,8 +598,8 @@ pub fn tool_stop_watch_docs(args: &Value) -> Result<String> {
 
 pub fn tool_index_manifests(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
-    let store = prism.store().context("not initialized")?;
-    let results = infigraph_core::manifest::index_manifests(prism.root(), store)?;
+    let backend = prism.backend().context("not initialized")?;
+    let results = infigraph_core::manifest::index_manifests(prism.root(), backend)?;
     if results.is_empty() {
         return Ok(
             "No manifests found (package.json, Cargo.toml, go.mod, pom.xml, etc.)".to_string(),

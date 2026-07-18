@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::graph::GraphQuery;
 use crate::lang::LanguageRegistry;
 use crate::Infigraph;
 
@@ -191,14 +190,8 @@ impl Registry {
             let mut prism = Infigraph::open(&entry.path, registry)?;
             prism.init()?;
 
-            let query_result = if let Some(backend) = prism.backend() {
-                backend.raw_query(cypher)
-            } else {
-                let store = prism.store().context("graph not initialized")?;
-                let conn = store.connection()?;
-                let gq = GraphQuery::new(&conn);
-                gq.raw_query(cypher)
-            };
+            let backend = prism.backend().context("graph not initialized")?;
+            let query_result = backend.raw_query(cypher);
 
             match query_result {
                 Ok(rows) => {
@@ -565,9 +558,8 @@ pub fn index_group(
                 results.push((repo_name.clone(), indexed_files, total_files));
 
                 // Index manifests so Dependency nodes exist for SharedPackage detection
-                // TODO: add manifest indexing via GraphBackend trait for Neo4j mode
-                if let Some(store) = prism.store() {
-                    let _ = crate::manifest::index_manifests(prism.root(), store);
+                if let Some(backend) = prism.backend() {
+                    let _ = crate::manifest::index_manifests(prism.root(), backend);
                 }
 
                 let entry = registry.repos.get(&repo_name).cloned();
@@ -600,12 +592,8 @@ fn is_remote_mode() -> bool {
 }
 
 fn raw_query_prism(prism: &Infigraph, cypher: &str) -> Result<Vec<Vec<String>>> {
-    if let Some(backend) = prism.backend() {
-        backend.raw_query(cypher)
-    } else {
-        let store = prism.store().context("graph not initialized")?;
-        let conn = store.connection()?;
-        let gq = GraphQuery::new(&conn);
-        gq.raw_query(cypher)
-    }
+    prism
+        .backend()
+        .context("graph not initialized")?
+        .raw_query(cypher)
 }

@@ -103,8 +103,8 @@ pub(crate) fn cmd_group(root: &Path, action: GroupAction) -> Result<()> {
                 let mut prism = Infigraph::open(&entry.path, reg)?;
                 prism.init()?;
                 let result = prism.index()?;
-                if let Some(store) = prism.store() {
-                    let _ = infigraph_core::manifest::index_manifests(&entry.path, store);
+                if let Some(backend) = prism.backend() {
+                    let _ = infigraph_core::manifest::index_manifests(&entry.path, backend);
                 }
                 println!(
                     "  Indexed {}/{} files",
@@ -287,8 +287,8 @@ pub(crate) fn cmd_group(root: &Path, action: GroupAction) -> Result<()> {
                 let mut prism = Infigraph::open(&entry.path, reg)?;
                 prism.init()?;
                 let result = prism.index()?;
-                if let Some(store) = prism.store() {
-                    let _ = infigraph_core::manifest::index_manifests(&entry.path, store);
+                if let Some(backend) = prism.backend() {
+                    let _ = infigraph_core::manifest::index_manifests(&entry.path, backend);
                 }
                 println!(
                     "    Indexed {}/{} files",

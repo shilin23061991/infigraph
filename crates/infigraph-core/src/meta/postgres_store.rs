@@ -703,6 +703,16 @@ impl PostgresMetaStore {
             })
             .collect())
     }
+
+    pub fn embedding_count(&self, kind: &str) -> Result<i64> {
+        let row = self.block_on(async {
+            self.client
+                .query_one("SELECT COUNT(*) FROM embeddings WHERE kind = $1", &[&kind])
+                .await
+                .map_err(|e| anyhow::anyhow!("embedding count failed: {e:?}"))
+        })?;
+        Ok(row.get(0))
+    }
 }
 
 fn row_to_session(r: &tokio_postgres::Row) -> SessionData {

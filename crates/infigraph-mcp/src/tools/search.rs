@@ -63,6 +63,18 @@ fn is_remote_mode() -> bool {
     }
 }
 
+fn remote_cache_key() -> SystemTime {
+    #[cfg(feature = "remote")]
+    {
+        use infigraph_core::meta::PostgresMetaStore;
+        if let Ok(pg) = PostgresMetaStore::connect_from_env() {
+            let count = pg.embedding_count("symbol").unwrap_or(0) as u64;
+            return std::time::UNIX_EPOCH + std::time::Duration::from_secs(count);
+        }
+    }
+    std::time::UNIX_EPOCH
+}
+
 fn get_or_build_search_ctx(args: &Value) -> Result<CachedSearchData> {
     let raw_path = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
     let path = super::helpers::resolve_project_path(raw_path);
@@ -71,10 +83,8 @@ fn get_or_build_search_ctx(args: &Value) -> Result<CachedSearchData> {
 
     let is_remote = is_remote_mode();
 
-    // Cache key: in remote mode use a sentinel mtime (no local embeddings.bin).
-    // TODO: use pgvector count or max(updated_at) for proper invalidation.
     let mtime = if is_remote {
-        std::time::UNIX_EPOCH
+        remote_cache_key()
     } else {
         let emb_file = tg_root.join("embeddings.bin");
         std::fs::metadata(&emb_file)
@@ -132,12 +142,8 @@ fn get_or_build_search_ctx(args: &Value) -> Result<CachedSearchData> {
 
 fn get_search_data_local(args: &Value, path: &str) -> Result<SearchData> {
     let prism = super::helpers::open_prism_read_only(args)?;
-    let store = prism.store().context("not initialized")?;
-    let conn = store.connection()?;
-    let gq = infigraph_core::graph::GraphQuery::new(&conn);
-    let rows = gq.raw_query(
-        "MATCH (s:Symbol) RETURN s.id, s.name, s.kind, s.file, s.docstring, s.start_line, s.end_line",
-    )?;
+    let backend = prism.backend().context("not initialized")?;
+    let rows = backend.get_symbols_for_search()?;
 
     let docs = build_docs_from_rows(&rows);
     let embedder = embed::best_embedder();

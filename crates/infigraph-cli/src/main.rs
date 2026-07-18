@@ -1008,11 +1008,11 @@ fn run(command: Commands, root: &Path) -> Result<()> {
             let registry = bundled_registry()?;
             let mut prism = infigraph_core::Infigraph::open(root, registry)?;
             prism.init()?;
-            let store = prism
-                .store()
+            let backend = prism
+                .backend()
                 .context("graph not initialized -- run 'infigraph index' first")?;
 
-            let current = infigraph_core::bench::QualityMetrics::capture(root, store)?;
+            let current = infigraph_core::bench::QualityMetrics::capture(root, backend)?;
 
             if save {
                 infigraph_core::bench::save_baseline(root, &current)?;

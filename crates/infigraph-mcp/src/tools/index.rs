@@ -72,10 +72,10 @@ pub fn tool_index_project(args: &Value) -> Result<String> {
     if result.resolve_stats.total_calls > 0 {
         out.push_str(&format!("{}\n", result.resolve_stats));
     }
-    if let Some(store) = prism.store() {
+    if let Some(backend) = prism.backend() {
         let root = std::path::PathBuf::from(path);
         let changed: Vec<&str> = result.extractions.iter().map(|e| e.file.as_str()).collect();
-        match embed::update_embeddings(store, &root, &changed) {
+        match embed::update_embeddings(backend, &root, &changed) {
             Ok(n) => out.push_str(&format!("Saved {} embeddings\n", n)),
             Err(e) => out.push_str(&format!("warning: embedding update failed: {e}\n")),
         }
@@ -108,10 +108,10 @@ pub fn tool_index_project(args: &Value) -> Result<String> {
 
 pub fn tool_get_dependencies(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
-    let store = prism.store().context("not initialized")?;
+    let backend = prism.backend().context("not initialized")?;
     let eco_filter = args.get("ecosystem").and_then(|v| v.as_str());
 
-    let mut deps = infigraph_core::manifest::query_deps(store)?;
+    let mut deps = infigraph_core::manifest::query_deps(backend)?;
     if let Some(eco) = eco_filter {
         deps.retain(|d| d.ecosystem == eco);
     }
@@ -136,7 +136,7 @@ pub fn tool_get_dependencies(args: &Value) -> Result<String> {
 pub fn tool_scip_import(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let root = prism.root().to_path_buf();
-    let store = prism.store().context("not initialized")?;
+    let backend = prism.backend().context("not initialized")?;
 
     let index_rel = args
         .get("index")
@@ -148,7 +148,7 @@ pub fn tool_scip_import(args: &Value) -> Result<String> {
         root.join(index_rel)
     };
 
-    let stats = infigraph_core::scip::import_scip_index(&index_path, store, Some(&root))?;
+    let stats = backend.import_scip_index(&index_path, Some(&root))?;
     let mut out = format!(
         "SCIP import complete:\n  files processed: {}\n  symbols added: {}\n  symbols enriched: {}\n  relations added: {}\n  references added: {}\n  corrections learned: {}",
         stats.files_processed,
