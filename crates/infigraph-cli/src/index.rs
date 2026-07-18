@@ -246,17 +246,61 @@ fn spawn_scip_child_process(root: &Path, detected_languages: &std::collections::
         Err(_) => std::process::Stdio::null(),
     };
 
-    let _ = std::process::Command::new(exe)
-        .arg("scip-enrich")
-        .arg("--languages")
-        .arg(&langs)
+    match std::process::Command::new(exe)
+        .args(scip_enrich_args(&langs))
         .current_dir(root)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_target)
-        .spawn();
+        .spawn()
+    {
+        Ok(mut child) => {
+            // spawn() only reports failure to launch (missing binary, exec
+            // permission). It says nothing about the child crashing or
+            // exiting nonzero afterward — exactly the failure shape of the
+            // bug this function used to hit silently (the child launched
+            // fine and died instantly inside clap's parser). Wait on it from
+            // a detached thread so this function still returns immediately,
+            // but any future silent-death cause surfaces a warning instead
+            // of only leaving a trace in a log nobody's prompted to open.
+            let log_path = log_path.clone();
+            std::thread::spawn(move || {
+                if let Some(msg) = scip_enrich_exit_message(child.wait(), &log_path) {
+                    eprintln!("{msg}");
+                }
+            });
+        }
+        Err(e) => eprintln!("  Warning: failed to spawn scip-enrich: {e}"),
+    }
 
     eprintln!("  Log: {}", log_path.display());
+}
+
+/// Args for respawning this binary as the hidden `scip-enrich` subcommand.
+/// `languages` is a positional argument on `Commands::ScipEnrich`, not a
+/// flag — extracted so tests can assert these parse under that definition
+/// without spawning a process.
+fn scip_enrich_args(langs: &str) -> Vec<String> {
+    vec!["scip-enrich".to_string(), langs.to_string()]
+}
+
+/// Decides what (if anything) to warn about after waiting on the detached
+/// scip-enrich child. Extracted from the wait thread so it's testable
+/// without spawning a real process — `current_exe()` in `spawn_scip_child_process`
+/// resolves to the test binary itself under `cargo test`, not `infigraph`,
+/// so the full spawn path can't be exercised end-to-end in a unit test.
+fn scip_enrich_exit_message(
+    status: std::io::Result<std::process::ExitStatus>,
+    log_path: &Path,
+) -> Option<String> {
+    match status {
+        Ok(status) if !status.success() => Some(format!(
+            "warning: scip-enrich exited with {status} — see {}",
+            log_path.display()
+        )),
+        Err(e) => Some(format!("warning: failed to wait on scip-enrich: {e}")),
+        _ => None,
+    }
 }
 
 pub(crate) const CI_ENV_VARS: &[&str] = &[
@@ -874,6 +918,80 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Regression test: `spawn_scip_child_process` respawns this binary with
+    /// `scip_enrich_args(&langs)` as the argv tail. This previously hardcoded
+    /// `--languages <langs>`, but `Commands::ScipEnrich` declares `languages`
+    /// as a positional argument (no `#[arg(long)]`), so every respawned
+    /// child died instantly with a clap parse error and no SCIP indexer
+    /// (scip-typescript, scip-python, etc.) ever actually ran. Parsing the
+    /// exact args through the real `Cli` definition — rather than spawning a
+    /// process — catches any future mismatch between the two immediately.
+    #[test]
+    fn scip_enrich_args_parse_as_positional_language() {
+        use clap::Parser;
+
+        let langs = "typescript,python";
+        let mut argv = vec!["infigraph".to_string()];
+        argv.extend(scip_enrich_args(langs));
+
+        let cli = crate::Cli::try_parse_from(&argv)
+            .expect("scip_enrich_args must parse under the ScipEnrich clap definition");
+
+        assert!(
+            matches!(&cli.command, crate::Commands::ScipEnrich { languages } if languages == langs),
+            "expected Commands::ScipEnrich {{ languages: {langs:?} }}"
+        );
+    }
+
+    /// Regression test for review feedback on the scip-enrich fix:
+    /// `spawn_scip_child_process` used to discard `spawn()`'s result
+    /// entirely. `spawn()` only reports failure to *launch* a process — it
+    /// says nothing about the child crashing or exiting nonzero afterward,
+    /// which is exactly the failure shape of the original bug (the child
+    /// launched fine and died instantly inside clap's parser). This asserts
+    /// the decision logic used by the wait thread: warn on a nonzero exit,
+    /// stay silent on success.
+    #[test]
+    #[cfg(unix)]
+    fn scip_enrich_exit_message_warns_on_nonzero_exit() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let log_path = std::path::PathBuf::from("/tmp/some-project/.infigraph/scip-enrich.log");
+        let failed = std::process::ExitStatus::from_raw(1 << 8); // exit code 1
+        let msg = scip_enrich_exit_message(Ok(failed), &log_path);
+        assert!(
+            msg.as_deref()
+                .is_some_and(|m| m.contains("scip-enrich exited") && m.contains("scip-enrich.log")),
+            "expected a warning mentioning the exit status and log path, got {msg:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn scip_enrich_exit_message_silent_on_success() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let log_path = std::path::PathBuf::from("/tmp/some-project/.infigraph/scip-enrich.log");
+        let ok = std::process::ExitStatus::from_raw(0);
+        let msg = scip_enrich_exit_message(Ok(ok), &log_path);
+        assert!(
+            msg.is_none(),
+            "a successful exit should not produce a warning, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn scip_enrich_exit_message_warns_on_wait_error() {
+        let log_path = std::path::PathBuf::from("/tmp/some-project/.infigraph/scip-enrich.log");
+        let err = std::io::Error::other("no such process");
+        let msg = scip_enrich_exit_message(Err(err), &log_path);
+        assert!(
+            msg.as_deref()
+                .is_some_and(|m| m.contains("failed to wait on scip-enrich")),
+            "expected a warning about the wait() failure, got {msg:?}"
+        );
+    }
 
     #[test]
     fn ci_env_vars_list_complete() {
