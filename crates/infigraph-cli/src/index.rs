@@ -1,26 +1,43 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+#[cfg(feature = "remote")]
+use infigraph_core::graph::GraphBackend;
 use infigraph_core::Infigraph;
 use infigraph_languages::bundled_registry;
 
 pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
+    #[cfg(feature = "remote")]
+    let remote = is_neo4j_backend();
+    #[cfg(not(feature = "remote"))]
+    let remote = false;
+
     if full {
-        let tg_dir = root.join(".infigraph");
-        if tg_dir.exists() {
-            // Sessions are in a separate DB at .infigraph/sessions/db/ — preserve them
-            let sessions_dir = tg_dir.join("sessions");
-            let sessions_backup = root.join(".infigraph-sessions-backup");
-            let had_sessions = sessions_dir.exists();
-            if had_sessions {
-                let _ = std::fs::rename(&sessions_dir, &sessions_backup);
+        if remote {
+            // Remote mode: clear the Neo4j graph (local .infigraph/ is irrelevant)
+            #[cfg(feature = "remote")]
+            {
+                let neo = infigraph_core::graph::Neo4jBackend::connect_from_env()?;
+                neo.init_schema()?;
+                neo.clear_all_data()?;
+                println!("Cleared Neo4j graph for full reindex");
             }
-            std::fs::remove_dir_all(&tg_dir)?;
-            if had_sessions {
-                std::fs::create_dir_all(&tg_dir)?;
-                let _ = std::fs::rename(&sessions_backup, &sessions_dir);
+        } else {
+            let tg_dir = root.join(".infigraph");
+            if tg_dir.exists() {
+                let sessions_dir = tg_dir.join("sessions");
+                let sessions_backup = root.join(".infigraph-sessions-backup");
+                let had_sessions = sessions_dir.exists();
+                if had_sessions {
+                    let _ = std::fs::rename(&sessions_dir, &sessions_backup);
+                }
+                std::fs::remove_dir_all(&tg_dir)?;
+                if had_sessions {
+                    std::fs::create_dir_all(&tg_dir)?;
+                    let _ = std::fs::rename(&sessions_backup, &sessions_dir);
+                }
+                println!("Cleaned .infigraph/ for full reindex (sessions preserved)");
             }
-            println!("Cleaned .infigraph/ for full reindex (sessions preserved)");
         }
     }
 
@@ -30,10 +47,19 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
 
     println!("Indexing project...");
     let result = prism.index()?;
-    println!(
-        "Indexed {}/{} files",
-        result.indexed_files, result.total_files
-    );
+    if result.indexed_files == 0 {
+        println!(
+            "All {} files up-to-date, nothing to reindex",
+            result.total_files
+        );
+    } else {
+        println!(
+            "Indexed {} files ({} up-to-date, {} total)",
+            result.indexed_files,
+            result.total_files - result.indexed_files,
+            result.total_files
+        );
+    }
 
     let mut by_lang: std::collections::HashMap<&str, (usize, usize)> =
         std::collections::HashMap::new();
@@ -48,6 +74,17 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
 
     if result.resolve_stats.total_calls > 0 {
         println!("{}", result.resolve_stats);
+    }
+
+    // Derive TESTED_BY edges — scoped to changed files for incremental
+    if result.indexed_files > 0 && prism.backend().is_some() {
+        let changed: Vec<&str> = result.extractions.iter().map(|e| e.file.as_str()).collect();
+        let scope = if full { None } else { Some(changed.as_slice()) };
+        match prism.backend().unwrap().derive_tested_by_edges(scope) {
+            Ok(count) if count > 0 => println!("Derived {} TESTED_BY edges", count),
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: TESTED_BY derivation failed: {e}"),
+        }
     }
 
     // Detect cross-cutting concerns, taint, etc. — skip when no files changed (incremental no-op)
@@ -144,6 +181,12 @@ pub(crate) fn cmd_index(root: &Path, full: bool, no_embed: bool) -> Result<()> {
             let mut registry = infigraph_core::multi::Registry::load()?;
             registry.register_repo(&repo_name, root, &prism)?;
             println!("Registered '{}' in Postgres registry", repo_name);
+
+            // Create Repo node in Neo4j and link all files
+            if let Some(backend) = prism.backend() {
+                backend.upsert_repo(&repo_name)?;
+                println!("Created Repo node '{}' with BELONGS_TO edges", repo_name);
+            }
         }
     }
 

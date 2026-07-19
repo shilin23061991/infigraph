@@ -15,6 +15,7 @@ Cargo.lock
 *.a
 
 # IDE / Editor
+.claude/
 .vscode/
 .idea/
 *.swp

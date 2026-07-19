@@ -68,8 +68,12 @@ impl Neo4jBackend {
         self.run_void(
             "CREATE CONSTRAINT folder_id IF NOT EXISTS FOR (d:Folder) REQUIRE d.id IS UNIQUE",
         )?;
+        self.run_void(
+            "CREATE CONSTRAINT repo_name IF NOT EXISTS FOR (r:Repo) REQUIRE r.name IS UNIQUE",
+        )?;
         self.run_void("CREATE INDEX symbol_file IF NOT EXISTS FOR (s:Symbol) ON (s.file)")?;
         self.run_void("CREATE INDEX symbol_name IF NOT EXISTS FOR (s:Symbol) ON (s.name)")?;
+        self.run_void("CREATE INDEX file_repo IF NOT EXISTS FOR (f:File) ON (f.repo)")?;
         Ok(())
     }
 
@@ -1141,8 +1145,222 @@ impl GraphBackend for Neo4jBackend {
             self.delete_files_data(&files)?;
         }
 
-        for ext in extractions {
-            self.upsert_extraction(ext)?;
+        // ── Phase 1: All nodes (File, Module, Symbol, Statement) ─────
+
+        // File nodes — one batch per chunk
+        let file_params: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .map(|ext| {
+                let mut m = HashMap::new();
+                m.insert("id".into(), ext.file.clone());
+                m.insert("lang".into(), ext.language.clone());
+                m
+            })
+            .collect();
+        for chunk in file_params.chunks(BATCH_SIZE) {
+            self.block_on(
+                self.graph.run(
+                    query(
+                        "UNWIND $batch AS f \
+                     MERGE (file:File {id: f.id}) SET file.language = f.lang",
+                    )
+                    .param("batch", chunk.to_vec()),
+                ),
+            )
+            .map_err(|e| anyhow::anyhow!("bulk upsert files failed: {e}"))?;
+        }
+
+        // Module nodes
+        let module_params: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .map(|ext| {
+                let mut m = HashMap::new();
+                m.insert("file".into(), ext.file.clone());
+                m.insert("lang".into(), ext.language.clone());
+                m.insert("hash".into(), ext.content_hash.clone());
+                m
+            })
+            .collect();
+        for chunk in module_params.chunks(BATCH_SIZE) {
+            self.block_on(
+                self.graph.run(
+                    query(
+                        "UNWIND $batch AS m \
+                     MERGE (mod:Module {file: m.file}) \
+                     SET mod.language = m.lang, mod.content_hash = m.hash",
+                    )
+                    .param("batch", chunk.to_vec()),
+                ),
+            )
+            .map_err(|e| anyhow::anyhow!("bulk upsert modules failed: {e}"))?;
+        }
+
+        // Symbol nodes — collect across all files
+        let all_symbols: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .flat_map(|ext| {
+                ext.symbols.iter().map(|s| {
+                    let mut m = HashMap::new();
+                    m.insert("id".into(), s.id.clone());
+                    m.insert("name".into(), s.name.clone());
+                    m.insert("kind".into(), format!("{:?}", s.kind));
+                    m.insert("file".into(), s.span.file.clone());
+                    m.insert("start_line".into(), s.span.start_line.to_string());
+                    m.insert("end_line".into(), s.span.end_line.to_string());
+                    m.insert(
+                        "visibility".into(),
+                        s.visibility.clone().unwrap_or_default(),
+                    );
+                    m.insert("signature_hash".into(), s.signature_hash.clone());
+                    m.insert("complexity".into(), s.complexity.to_string());
+                    m.insert("language".into(), s.language.clone());
+                    m.insert(
+                        "parameters".into(),
+                        s.parameters.clone().unwrap_or_default(),
+                    );
+                    m.insert(
+                        "return_type".into(),
+                        s.return_type.clone().unwrap_or_default(),
+                    );
+                    m.insert("docstring".into(), s.docstring.clone().unwrap_or_default());
+                    m.insert("parent".into(), s.parent.clone().unwrap_or_default());
+                    m
+                })
+            })
+            .collect();
+        for chunk in all_symbols.chunks(BATCH_SIZE) {
+            self.block_on(self.graph.run(
+                query(
+                    "UNWIND $batch AS s \
+                     MERGE (sym:Symbol {id: s.id}) \
+                     SET sym.name = s.name, sym.kind = s.kind, sym.file = s.file, \
+                         sym.start_line = toInteger(s.start_line), sym.end_line = toInteger(s.end_line), \
+                         sym.visibility = s.visibility, sym.signature_hash = s.signature_hash, \
+                         sym.complexity = toInteger(s.complexity), sym.language = s.language, \
+                         sym.parameters = s.parameters, sym.return_type = s.return_type, \
+                         sym.docstring = s.docstring, sym.parent = s.parent",
+                )
+                .param("batch", chunk.to_vec()),
+            ))
+            .map_err(|e| anyhow::anyhow!("bulk upsert symbols failed: {e}"))?;
+        }
+
+        // Statement nodes + HAS_STATEMENT edges (fused — symbol nodes already exist)
+        let all_statements: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .flat_map(|ext| {
+                ext.statements.iter().map(|st| {
+                    let mut m = HashMap::new();
+                    m.insert("id".into(), st.id.clone());
+                    m.insert("kind".into(), format!("{:?}", st.kind));
+                    m.insert("condition".into(), st.condition.clone());
+                    m.insert("start_line".into(), st.start_line.to_string());
+                    m.insert("end_line".into(), st.end_line.to_string());
+                    m.insert("depth".into(), st.depth.to_string());
+                    m.insert("parent".into(), st.parent_symbol.clone());
+                    m
+                })
+            })
+            .collect();
+        for chunk in all_statements.chunks(BATCH_SIZE) {
+            self.block_on(self.graph.run(
+                query(
+                    "UNWIND $batch AS st \
+                     MERGE (s:Statement {id: st.id}) \
+                     SET s.kind = st.kind, s.condition = st.condition, \
+                         s.start_line = toInteger(st.start_line), s.end_line = toInteger(st.end_line), \
+                         s.depth = toInteger(st.depth) \
+                     WITH s, st \
+                     MATCH (sym:Symbol {id: st.parent}) \
+                     MERGE (sym)-[:HAS_STATEMENT]->(s)",
+                )
+                .param("batch", chunk.to_vec()),
+            ))
+            .map_err(|e| anyhow::anyhow!("bulk upsert statements failed: {e}"))?;
+        }
+
+        // ── Phase 2: Edges (DEFINES, IMPORTS, CALLS) ─────────────────
+
+        // DEFINES edges (File -> Symbol)
+        let all_defines: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .flat_map(|ext| {
+                ext.symbols.iter().map(|s| {
+                    let mut m = HashMap::new();
+                    m.insert("file".into(), ext.file.clone());
+                    m.insert("sym".into(), s.id.clone());
+                    m
+                })
+            })
+            .collect();
+        for chunk in all_defines.chunks(BATCH_SIZE) {
+            self.block_on(
+                self.graph.run(
+                    query(
+                        "UNWIND $batch AS d \
+                     MATCH (f:File {id: d.file}), (s:Symbol {id: d.sym}) \
+                     MERGE (f)-[:DEFINES]->(s)",
+                    )
+                    .param("batch", chunk.to_vec()),
+                ),
+            )
+            .map_err(|e| anyhow::anyhow!("bulk upsert DEFINES failed: {e}"))?;
+        }
+
+        // IMPORTS edges
+        let all_imports: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .flat_map(|ext| {
+                ext.relations
+                    .iter()
+                    .filter(|r| r.kind == crate::model::RelationKind::Imports)
+                    .map(|r| {
+                        let mut m = HashMap::new();
+                        m.insert("src".into(), r.source_id.clone());
+                        m.insert("tgt".into(), r.target_id.clone());
+                        m
+                    })
+            })
+            .collect();
+        for chunk in all_imports.chunks(BATCH_SIZE) {
+            let _ = self.block_on(
+                self.graph.run(
+                    query(
+                        "UNWIND $batch AS p \
+                     MATCH (a:Symbol {id: p.src}), (b:Symbol {id: p.tgt}) \
+                     MERGE (a)-[:IMPORTS]->(b)",
+                    )
+                    .param("batch", chunk.to_vec()),
+                ),
+            );
+        }
+
+        // CALLS edges
+        let all_calls: Vec<HashMap<String, String>> = extractions
+            .iter()
+            .flat_map(|ext| {
+                ext.relations
+                    .iter()
+                    .filter(|r| r.kind == crate::model::RelationKind::Calls)
+                    .map(|r| {
+                        let mut m = HashMap::new();
+                        m.insert("src".into(), r.source_id.clone());
+                        m.insert("tgt".into(), r.target_id.clone());
+                        m
+                    })
+            })
+            .collect();
+        for chunk in all_calls.chunks(BATCH_SIZE) {
+            let _ = self.block_on(
+                self.graph.run(
+                    query(
+                        "UNWIND $batch AS p \
+                     MATCH (a:Symbol {id: p.src}), (b:Symbol {id: p.tgt}) \
+                     MERGE (a)-[:CALLS]->(b)",
+                    )
+                    .param("batch", chunk.to_vec()),
+                ),
+            );
         }
 
         let file_paths: Vec<&str> = extractions.iter().map(|e| e.file.as_str()).collect();
@@ -1155,15 +1373,76 @@ impl GraphBackend for Neo4jBackend {
         self.delete_files_data(&[file.to_string()])
     }
 
-    fn derive_tested_by_edges(&self) -> Result<usize> {
-        // Match test files (files containing "test" in path) calling non-test symbols
-        self.run_void(
-            "MATCH (test:Symbol)-[:CALLS]->(target:Symbol) \
-             WHERE test.file CONTAINS 'test' AND NOT target.file CONTAINS 'test' \
-             MERGE (target)<-[:TESTED_BY]-(test)",
-        )?;
+    fn derive_tested_by_edges(&self, changed_files: Option<&[&str]>) -> Result<usize> {
+        match changed_files {
+            Some(files) if !files.is_empty() => {
+                let file_list: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+                self.block_on(
+                    self.graph.run(
+                        query(
+                            "MATCH (test:Symbol)-[:CALLS]->(target:Symbol) \
+                         WHERE (test.file IN $files OR target.file IN $files) \
+                           AND test.file CONTAINS 'test' \
+                           AND NOT target.file CONTAINS 'test' \
+                         MERGE (target)<-[:TESTED_BY]-(test)",
+                        )
+                        .param("files", file_list),
+                    ),
+                )
+                .map_err(|e| anyhow::anyhow!("derive_tested_by scoped failed: {e}"))?;
+            }
+            _ => {
+                self.run_void(
+                    "MATCH (test:Symbol)-[:CALLS]->(target:Symbol) \
+                     WHERE test.file CONTAINS 'test' AND NOT target.file CONTAINS 'test' \
+                     MERGE (target)<-[:TESTED_BY]-(test)",
+                )?;
+            }
+        }
         let count = self.count_query("MATCH ()-[r:TESTED_BY]->() RETURN count(r) AS c", "c")?;
         Ok(count as usize)
+    }
+
+    fn clear_all_data(&self) -> Result<()> {
+        loop {
+            let deleted = self.count_query(
+                "MATCH (n) WITH n LIMIT 5000 DETACH DELETE n RETURN count(*) AS c",
+                "c",
+            )?;
+            if deleted == 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn upsert_repo(&self, repo_name: &str) -> Result<()> {
+        self.block_on(
+            self.graph
+                .run(query("MERGE (r:Repo {name: $name})").param("name", repo_name)),
+        )
+        .map_err(|e| anyhow::anyhow!("upsert Repo node failed: {e}"))?;
+        self.block_on(
+            self.graph.run(
+                query(
+                    "MATCH (f:File) WHERE f.repo IS NULL OR f.repo = '' \
+                 SET f.repo = $repo",
+                )
+                .param("repo", repo_name),
+            ),
+        )
+        .map_err(|e| anyhow::anyhow!("set file repo failed: {e}"))?;
+        self.block_on(
+            self.graph.run(
+                query(
+                    "MATCH (f:File {repo: $repo}), (r:Repo {name: $repo}) \
+                 MERGE (f)-[:BELONGS_TO]->(r)",
+                )
+                .param("repo", repo_name),
+            ),
+        )
+        .map_err(|e| anyhow::anyhow!("upsert BELONGS_TO edges failed: {e}"))?;
+        Ok(())
     }
 
     fn resolve_calls(

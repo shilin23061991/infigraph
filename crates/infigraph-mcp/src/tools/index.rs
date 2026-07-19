@@ -52,10 +52,19 @@ pub fn tool_index_project(args: &Value) -> Result<String> {
     let prism = open_prism(args)?;
     let result = prism.index()?;
 
-    let mut out = format!(
-        "Indexed {}/{} files\n",
-        result.indexed_files, result.total_files
-    );
+    let mut out = if result.indexed_files == 0 {
+        format!(
+            "All {} files up-to-date, nothing to reindex\n",
+            result.total_files
+        )
+    } else {
+        format!(
+            "Indexed {} files ({} up-to-date, {} total)\n",
+            result.indexed_files,
+            result.total_files - result.indexed_files,
+            result.total_files
+        )
+    };
     let mut by_lang: std::collections::HashMap<&str, (usize, usize)> =
         std::collections::HashMap::new();
     for ext in &result.extractions {

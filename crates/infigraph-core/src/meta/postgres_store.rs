@@ -849,6 +849,16 @@ impl PostgresMetaStore {
             .collect())
     }
 
+    pub fn all_embedding_ids(&self, kind: &str) -> Result<Vec<String>> {
+        let rows = self.block_on(async {
+            self.client
+                .query("SELECT id FROM embeddings WHERE kind = $1", &[&kind])
+                .await
+                .map_err(|e| anyhow::anyhow!("all embedding ids failed: {e:?}"))
+        })?;
+        Ok(rows.iter().map(|r| r.get(0)).collect())
+    }
+
     pub fn embedding_count(&self, kind: &str) -> Result<i64> {
         let row = self.block_on(async {
             self.client
