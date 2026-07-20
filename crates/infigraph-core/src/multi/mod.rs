@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::lang::LanguageRegistry;
 use crate::Infigraph;
 
+#[cfg(feature = "neo4j")]
+use crate::graph::GraphBackend;
+
 #[cfg(feature = "postgres")]
 use crate::meta::PostgresMetaStore;
 
@@ -164,9 +167,10 @@ impl Registry {
         if !self.repos.contains_key(repo_name) {
             anyhow::bail!("repo '{}' not registered. Run index first.", repo_name);
         }
-        if !group.repos.contains(&repo_name.to_string()) {
-            group.repos.push(repo_name.to_string());
+        if group.repos.contains(&repo_name.to_string()) {
+            return Ok(());
         }
+        group.repos.push(repo_name.to_string());
         self.save()
     }
 
@@ -535,9 +539,25 @@ pub fn index_group(
         }
     }
 
-    // Skip repos whose HEAD commit hasn't changed since last index (incremental)
+    // Skip repos whose HEAD commit hasn't changed since last index (incremental).
+    // In Neo4j mode, also verify the graph actually has data for "unchanged" repos —
+    // if Neo4j storage was wiped, Postgres still thinks repos are indexed.
     let mut to_index: Vec<(String, RepoEntry)> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+
+    #[cfg(feature = "neo4j")]
+    let neo4j_backend = if !full
+        && std::env::var("INFIGRAPH_BACKEND")
+            .map(|v| v == "neo4j")
+            .unwrap_or(false)
+    {
+        crate::graph::Neo4jBackend::connect_from_env().ok()
+    } else {
+        None
+    };
+    #[cfg(not(feature = "neo4j"))]
+    let neo4j_backend: Option<()> = None;
+
     if full {
         to_index = entries;
     } else {
@@ -548,7 +568,40 @@ pub fn index_group(
                 _ => false,
             };
             if unchanged {
-                skipped.push(name);
+                #[allow(unused_mut)]
+                let mut graph_empty = false;
+                #[cfg(feature = "neo4j")]
+                if let Some(ref neo) = neo4j_backend {
+                    let ns = if group.org.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}/{}", group.org, name)
+                    };
+                    let escaped_ns = crate::escape_str(&ns);
+                    let cypher = format!(
+                        "MATCH (s:Symbol) WHERE s.id STARTS WITH '{escaped_ns}/' RETURN count(s) AS c"
+                    );
+                    if let Ok(rows) = neo.raw_query(&cypher) {
+                        let count: u64 = rows
+                            .first()
+                            .and_then(|r| r.first())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        if count == 0 {
+                            graph_empty = true;
+                        }
+                    }
+                }
+                let _ = &neo4j_backend; // suppress unused warning when neo4j feature off
+                if graph_empty {
+                    eprintln!(
+                        "[group] repo '{}' commit unchanged but graph empty — forcing re-index",
+                        name
+                    );
+                    to_index.push((name, entry));
+                } else {
+                    skipped.push(name);
+                }
             } else {
                 to_index.push((name, entry));
             }
@@ -616,7 +669,9 @@ pub fn index_group(
 
                 // Index manifests so Dependency nodes exist for SharedPackage detection
                 if let Some(backend) = prism.backend() {
-                    let _ = crate::manifest::index_manifests(prism.root(), backend);
+                    if let Err(e) = crate::manifest::index_manifests(prism.root(), backend) {
+                        eprintln!("[group] manifest indexing failed for '{}': {e}", repo_name);
+                    }
                 }
 
                 let entry = registry.repos.get(&repo_name).cloned();
