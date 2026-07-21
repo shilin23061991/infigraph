@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_60a5edde3b6d31::t_59d8f3c0dafa9d 14-18,20-21,32-33
+.github/workflows/pages.yml
+  s_60a5edde3b6d31::t_3cfe6c6ea578a7 28-32,34-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "b2d05c341f2cad2d0bd5c6920b72aca54d6dc560",
+  "prompts": {},
+  "sessions": {
+    "s_60a5edde3b6d31": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "621fdfe7-ed47-4857-87c1-ebecf1e445bd",
+        "model": "unknown"
+      },
+      "human_author": "stashilin <153395600+stashilin@users.noreply.github.com>"
+    }
+  }
+}
